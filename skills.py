@@ -229,22 +229,5 @@ if __name__ == "__main__":
     print("\n" + "="*60 + "\n测试用例 3：调试模式（查看中间匹配过程）\n" + "="*60)
     test_3 = "历史架空小说怎么写出生活感？"
     print(skill.execute(test_3, return_prompt_only=False))
-pp = FastAPI()
-skill = PlatinumAuthorSkill()
 
-# 1. 定义请求与响应的数据结构
-class SkillRequest(BaseModel):
-    query: str
-
-class SkillResponse(BaseModel):
-    final_prompt: str
-
-# 2. 定义API端点 (Endpoint)
-@app.post("/execute")
-async def execute_skill(request: SkillRequest):
-    prompt = skill.execute(request.query, return_prompt_only=True)
-    return SkillResponse(final_prompt=prompt)
-
-# 3. 程序入口
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+# FastAPI server code removed - use main.py CLI instead
