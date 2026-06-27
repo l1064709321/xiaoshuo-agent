@@ -1,4 +1,4 @@
-# name: qidian-platinum-authors-skill
+# name: 起点-platinum-authors-skill
 description: |
   起点白金大神创作技能库。
   覆盖玄幻仙侠、都市现代、悬疑科幻、历史架空、女频言情、经典文学等主流网文类型。
