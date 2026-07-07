@@ -47,7 +47,7 @@ class CorpusLoader:
         author_name: str,
         scene_type: str = None,
         limit: int = 3,
-        min_words: int = 100,
+        min_words: int = 10,
         max_words: int = 800,
     ) -> List[Dict]:
         """
