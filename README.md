@@ -1,4 +1,9 @@
 # 起点白金大神创作技能库
+![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)
+![License: GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)
+![License: AGPLv3](https://img.shields.io/badge/License-AGPLv3-blue.svg)
+![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)
+![License: 定制协议](https://img.shields.io/badge/License-定制协议-brightgreen.svg)
 
 覆盖111位顶尖网文作家的风格定位与核心技法，内置原文语料库、33维审计系统、AI编辑部流水线，支持迭代写作。
 
