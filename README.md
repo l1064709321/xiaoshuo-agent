@@ -1,44 +1,20 @@
-# 起点白金大神创作技能库
+# 多风格写作参考skills
 ![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)
 ![License: GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)
 ![License: AGPLv3](https://img.shields.io/badge/License-AGPLv3-blue.svg)
 ![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)
 ![License: 定制协议](https://img.shields.io/badge/License-定制协议-brightgreen.svg)
 
-覆盖111位顶尖网文作家的风格定位与核心技法，内置原文语料库、33维审计系统、AI编辑部流水线，支持迭代写作。
 
 ## 核心能力
 
 | 能力 | 说明 |
 |:---|:---|
-| **原文语料库** | 111位作者、800+精选段落，按场景标签索引（战斗/对话/环境/心理/开篇/高潮/幽默/悬疑） |
 | **风格拆解** | 词汇指纹、环境逻辑、经典台词、结构蓝图，基因测序级分析 |
 | **文风仿写** | 喂一段样本，自动匹配大神+注入原文参考，输出仿写 Prompt |
 | **33维审计** | 角色一致性、战力崩坏、伏笔遗忘、AI味检测等36个维度 |
 | **迭代写作** | 写完→审→改→再审→再改，最多N轮，直到没有严重问题 |
 | **编辑部流水线** | 扫榜→大纲→枪手代笔→毒舌审稿→改稿，全自动化 |
-
-## 快速开始
-
-```bash
-# 列出所有作家
-python3 main.py list
-
-# 查看某作者的原文语料
-python3 main.py corpus --author=辰东
-
-# 深度拆解某作家风格（含原文精读）
-python3 main.py deconstruct --name=辰东
-
-# 枪手代笔（自动注入原文参考）
-python3 main.py ghostwrite --outline=大纲.txt --author=天蚕土豆 --chapter=1
-
-# 完整审计
-python3 main.py full --file=chapter.txt
-
-# 完整流水线（含迭代）
-python3 main.py pipeline --concept="废柴逆袭" --author=辰东 --rounds=3
-```
 
 ## 原文语料库
 
