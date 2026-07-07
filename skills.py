@@ -1,5 +1,17 @@
 import json
+import sys
+import os
 from typing import List, Dict
+
+# 导入原文语料库
+try:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from corpus.loader import get_corpus_loader
+    HAS_CORPUS = True
+except ImportError:
+    HAS_CORPUS = False
+    def get_corpus_loader():
+        return None
 
 NOVEL_DECONSTRUCTION_DB = [
     {
@@ -4106,6 +4118,9 @@ class DeconstructionPromptGenerator:
     def generate(intent: Dict, matched_data: List[Dict]) -> str:
         data_sections = []
         
+        # 加载原文语料库
+        corpus_loader = get_corpus_loader() if HAS_CORPUS else None
+        
         for author in matched_data:
             section = f"\n## 大神：{author['name']} ({author['genre']})\n"
             data = author["extracted_data"]
@@ -4129,7 +4144,38 @@ class DeconstructionPromptGenerator:
                 section += "### 全书结构拆解（从第一章到大结局）\n"
                 for phase, logic in struct.items():
                     section += f"- **{phase}**：{logic}\n"
-                    
+            
+            # ===== 新增：注入原文语料 =====
+            if corpus_loader:
+                author_name = author['name']
+                # 根据用户需求匹配场景类型
+                raw_input = intent.get('raw_input', '')
+                scene_hints = []
+                for tag, keywords in [
+                    ('battle', ['战斗', '打斗', '打架', '对决', '比武', '大战']),
+                    ('dialogue', ['对话', '台词', '嘴炮', '聊天', '口才']),
+                    ('environment', ['环境', '场景', '风景', '描写', '氛围']),
+                    ('psychology', ['心理', '内心', '独白', '情感', '心路']),
+                    ('opening', ['开篇', '开头', '出场', '开局']),
+                    ('climax', ['高潮', '燃', '爽', '逆袭', '打脸']),
+                    ('humor', ['搞笑', '幽默', '轻松', '沙雕']),
+                    ('suspense', ['悬疑', '惊悚', '诡异', '恐怖']),
+                ]:
+                    if any(k in raw_input for k in keywords):
+                        scene_hints.append(tag)
+                
+                scene_type = scene_hints[0] if scene_hints else None
+                passages = corpus_loader.get_passages(author_name, scene_type=scene_type, limit=3)
+                
+                if passages:
+                    section += "\n###   原文精读（句式·节奏·信息密度）\n"
+                    section += "**以下为该作者的标志性原文片段，注意学习其句式节奏、断句习惯、描写与叙事的比例：**\n\n"
+                    for i, p in enumerate(passages, 1):
+                        tag_str = "·".join(p.get("tags", []))
+                        source = p.get("source", "")
+                        section += f"**片段{i}**（{tag_str}）{source}\n"
+                        section += f"```\n{p['text']}\n```\n\n"
+            
             data_sections.append(section)
 
         data_text = "\n".join(data_sections)
@@ -4139,19 +4185,20 @@ class DeconstructionPromptGenerator:
 
 ## 你的任务
 用户想要深度拆解网文大神的写作逻辑。你不是在复述剧情，你是在做**基因测序**。
-你必须基于提供的【拆解数据库】，结合用户的疑问，用极其锋利、通透的语言，告诉用户：**大神为什么要这么写？底层逻辑是什么？如何复用这种技巧？**
+你必须基于提供的【拆解数据库】和【原文精读】，结合用户的疑问，用极其锋利、通透的语言，告诉用户：**大神为什么要这么写？底层逻辑是什么？如何复用这种技巧？**
 
 ## 用户的拆解需求
 {intent['raw_input']}
 
-## 匹配的拆解数据库
+## 匹配的拆解数据库（含原文精读）
 {data_text}
 
 ## 输出要求
 1. **一针见血**：不要说废话，直接点出大神手法的核心本质（例如：土豆的词汇是为了施压，古龙的环境是心境的镜像）。
 2. **举例拆解**：必须引用数据库中的原词/原句/原动作，进行手术刀级的切片分析。
-3. **实操复用**：在每段拆解后，必须给出【写作复用公式】，教用户如何把这种逻辑套用到自己的小说里。
-4. **语言风格**：冷酷、专业、通透，像一个看透网文底层代码的黑客。
+3. **原文精读**：重点分析【原文精读】中的段落，拆解其句式节奏、信息密度、断句技巧。这是学习文风的关键。
+4. **实操复用**：在每段拆解后，必须给出【写作复用公式】，教用户如何把这种逻辑套用到自己的小说里。
+5. **语言风格**：冷酷、专业、通透，像一个看透网文底层代码的黑客。
 """
         return final_prompt
 
@@ -4994,11 +5041,26 @@ class StyleImitator:
             analysis["matched_author"] = matched
         return analysis
 
-    def generate_imitation(self, style_analysis, topic, word_count=800):
-        """根据风格分析生成仿写prompt。"""
+    def generate_imitation(self, style_analysis, topic, word_count=800, author_name=None):
+        """根据风格分析生成仿写prompt（含原文语料参考）。"""
+        # ===== 新增：从语料库获取原文参考 =====
+        corpus_ref = ""
+        if author_name and HAS_CORPUS:
+            corpus_loader = get_corpus_loader()
+            few_shot = corpus_loader.get_few_shot_prompt(author_name, limit=3)
+            if few_shot:
+                corpus_ref = f"""
+【原文精读 - {author_name}】
+以下是该作者的代表性原文片段。请仔细观察其句式节奏、断句习惯、信息密度，然后模仿这种"味道"来写。
+不要模仿内容，要模仿笔法。
+
+{few_shot}
+
+"""
+        
         prompt = f"""请仿写以下风格的{word_count}字小说片段。
 
-【风格指纹】
+{corpus_ref}【风格指纹】
 - 平均句长: {style_analysis['sentence_avg_len']:.1f}字
 - 对话占比: {style_analysis['dialogue_ratio']:.0%}
 - 风格标签: {', '.join(style_analysis['style_tags'])}
@@ -5009,9 +5071,12 @@ class StyleImitator:
 【主题/场景】{topic}
 
 【要求】
-1. 严格匹配上述风格指纹
-2. 避免AI味句式
+1. 严格匹配上述风格指纹和原文片段的笔法
+2. 避免AI味句式（不要用'不由得'、'一股暖流涌上心头'、'他知道，自己必须变强'等）
 3. 包含至少一个记忆点（金句/名场面/反转）
+4. 句式要有变化：长短交替，不要全是中等长度的句子
+5. 场景描写要有感官细节
+6. 心理描写要用具体念头，不要概括
 
 请直接输出仿写内容："""
         return prompt
@@ -5287,7 +5352,7 @@ class EditorialPipeline:
 请基于以上框架输出完整大纲："""
         return prompt
 
-    def ghostwriter(self, outline_text, style_ref=None, chapter_num=1, word_count=3000):
+    def ghostwriter(self, outline_text, style_ref=None, chapter_num=1, word_count=3000, author_name=None):
         """枪手代笔：根据大纲写正文。"""
         style_info = ""
         if style_ref:
@@ -5298,11 +5363,40 @@ class EditorialPipeline:
 - 风格标签: {', '.join(analysis['style_tags'])}
 - 对话占比: {analysis['dialogue_ratio']:.0%}
 """
+        
+        # ===== 新增：从语料库获取原文参考 =====
+        corpus_ref = ""
+        if author_name and HAS_CORPUS:
+            corpus_loader = get_corpus_loader()
+            # 根据大纲内容推断场景类型
+            scene_hints = []
+            for tag, keywords in [
+                ('battle', ['战斗', '打斗', '对决', '大战', '比武']),
+                ('dialogue', ['对话', '谈判', '交涉', '嘴炮']),
+                ('environment', ['场景', '环境', '描写', '登场']),
+                ('psychology', ['心理', '内心', '独白', '情感']),
+                ('opening', ['开篇', '出场', '开局']),
+                ('climax', ['高潮', '逆袭', '打脸', '突破']),
+            ]:
+                if any(k in outline_text for k in keywords):
+                    scene_hints.append(tag)
+            
+            scene_type = scene_hints[0] if scene_hints else None
+            few_shot = corpus_loader.get_few_shot_prompt(author_name, scene_type=scene_type, limit=3)
+            if few_shot:
+                corpus_ref = f"""
+【文风参考原文 - {author_name}】
+以下是目标作者的代表性原文片段。写作时请模仿其句式节奏、断句习惯、描写与叙事的比例、信息密度。
+不要模仿内容，要模仿"味道"。
+
+{few_shot}
+"""
+        
         prompt = f"""你是一位专业网文写手。请根据以下大纲写第{chapter_num}章，约{word_count}字。
 
 【大纲】
 {outline_text}
-{style_info}
+{style_info}{corpus_ref}
 【写作要求】
 1. 开篇即抓人，不要铺垫
 2. 章末留钩子
@@ -5310,6 +5404,9 @@ class EditorialPipeline:
 4. 对话要有个性，体现角色身份
 5. 动作描写要具体，不要泛泛而谈
 6. 每1000字至少一个爽点或情绪转折
+7. 句式要有变化：长短交替，不要全是中等长度的句子
+8. 场景描写要有感官细节（视觉、听觉、触觉、嗅觉）
+9. 心理描写要用具体念头，不要用概括性描述
 
 请直接输出正文："""
         return prompt
@@ -5327,37 +5424,108 @@ class EditorialPipeline:
 
     def rewriter(self, text, issues):
         """改稿编辑：根据审计报告修改文本。"""
+        # 将问题按严重程度排序
+        critical = [i for i in issues if i.get('level') in ['严重', 'Critical', '🔴']]
+        warnings = [i for i in issues if i.get('level') in ['中等', 'Warning', '🟡']]
+        
+        issue_text = ""
+        for i in (critical + warnings)[:10]:
+            issue_text += f"- [{i.get('level','')}] {i.get('message','')}: {i.get('suggestion','')}\n"
+        
         prompt = f"""你是一位资深改稿编辑。请根据以下审计报告修改文本。
 
 【原文】
-{text[:3000]}
+{text[:5000]}
 
 【审计发现的问题】
-{chr(10).join(f"- [{i.get('level','')}] {i.get('message','')}: {i.get('suggestion','')}" for i in issues[:10])}
+{issue_text}
 
 【修改要求】
 1. 只修改有问题的部分，保持原文精华
 2. 每处修改标注【修改原因】
-3. 避免引入新的AI味句式
+3. 避免引入新的AI味句式（不要用'不由得'、'一股暖流涌上心头'、'他知道，自己必须变强'等）
 4. 保持原文风格和节奏
+5. 重点处理严重和中等问题
+6. 修改后的文字句式要有变化，长短交替
+7. 心理描写要用具体念头，不要概括
 
-请输出修改后的文本："""
+请输出修改后的完整文本："""
         return prompt
 
-    def run_pipeline(self, concept, style_ref=None):
-        """运行完整流水线。"""
+    def iterative_write(self, outline_text, style_ref=None, chapter_num=1, 
+                        word_count=3000, author_name=None, max_rounds=3):
+        """
+        迭代写作：写完→审→改→再审→再改，直到通过或达到最大轮次。
+        
+        返回：
+            dict: {
+                "final_text": 最终文本,
+                "rounds": 轮次记录,
+                "passed": 是否通过审计
+            }
+        """
+        rounds = []
+        
+        # 第一轮：生成初稿
+        ghost_prompt = self.ghostwriter(outline_text, style_ref, chapter_num, word_count, author_name)
+        rounds.append({
+            "round": 1,
+            "stage": "初稿生成",
+            "prompt": ghost_prompt,
+            "status": "waiting_for_ai"
+        })
+        
+        # 后续轮次的 prompt 模板（供外部调用时使用）
+        for round_num in range(2, max_rounds + 1):
+            rounds.append({
+                "round": round_num,
+                "stage": "审稿+改稿",
+                "audit_prompt_template": "请将上一轮生成的文本传入 editor() 进行审计",
+                "rewrite_prompt_template": "请将审计报告传入 rewriter() 进行修改",
+                "status": "pending"
+            })
+        
+        return {
+            "ghost_prompt": ghost_prompt,
+            "audit_method": "self.editor(text, outline_text)",
+            "rewrite_method": "self.rewriter(text, issues)",
+            "max_rounds": max_rounds,
+            "rounds": rounds,
+            "usage": """使用方式：
+1. 用 ghost_prompt 调用AI生成初稿
+2. 用 editor(text, outline) 审计初稿
+3. 如果有严重问题，用 rewriter(text, issues) 修改
+4. 重复2-3，直到没有严重问题或达到最大轮次
+"""
+        }
+
+    def run_pipeline(self, concept, style_ref=None, author_name=None, max_rounds=3):
+        """运行完整流水线（含迭代机制）。"""
         results = {}
         # 1. 扫榜
         results["scout"] = self.scout()
         # 2. 大纲
         results["outline_prompt"] = self.outline(concept)
-        # 3. 后续步骤需要人工介入
+        # 3. 迭代写作配置
+        results["iterative_config"] = {
+            "author_name": author_name,
+            "max_rounds": max_rounds,
+            "workflow": [
+                "① 扫榜完成 → 确定题材方向",
+                "② 大纲生成 → 请审阅大纲，确认后进入写作",
+                "③ 枪手代笔 → 根据大纲+原文语料逐章写作",
+                "④ 毒舌编辑 → 每章完成后自动审计（33维+AI味）",
+                "⑤ 改稿编辑 → 根据审计报告修改（最多{max_rounds}轮）",
+                "⑥ 终审拍板 → 没有严重问题后你确认发布",
+            ],
+            "key_change": "每一步都基于原文语料库的few-shot参考，而非模板指令"
+        }
         results["next_steps"] = [
             "扫榜完成 → 确定题材方向",
             "大纲生成 → 请审阅大纲，确认后进入写作",
-            "枪手代笔 → 根据大纲逐章写作",
+            "枪手代笔 → 根据大纲逐章写作（自动注入原文参考）",
             "毒舌编辑 → 每章完成后自动审计",
-            "改稿编辑 → 根据审计报告修改",
+            "改稿编辑 → 根据审计报告修改，最多{max_rounds}轮迭代",
             "终审拍板 → 你确认后发布",
         ]
         return results

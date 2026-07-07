@@ -15,6 +15,7 @@
   python3 main.py style --file=chapter.txt       # 文风分析（输出风格指纹）
   python3 main.py style --file=chapter.txt --name=辰东  # 文风分析+匹配大神
   python3 main.py imitate --file=sample.txt --topic="修仙世界的拍卖会"  # 文风仿写
+  python3 main.py imitate --file=sample.txt --topic="修仙世界的拍卖会" --author=辰东  # 文风仿写+原文参考
   python3 main.py stuck --file=chapter.txt       # 卡文诊断（识别卡点+续写路径）
   python3 main.py scout                          # 扫榜（市场趋势推荐）
   python3 main.py scout --category=玄幻仙侠      # 按分类扫榜
@@ -22,8 +23,12 @@
   python3 main.py outline --concept="废柴逆袭" --volumes=5  # 指定卷数
   python3 main.py ghostwrite --outline=outline.txt --chapter=1 --words=3000  # 枪手代笔
   python3 main.py ghostwrite --outline=outline.txt --style=sample.txt        # 指定文风代笔
+  python3 main.py ghostwrite --outline=outline.txt --author=辰东            # 代笔+原文语料参考
   python3 main.py pipeline --concept="废柴逆袭"  # 完整编辑部流水线
+  python3 main.py pipeline --concept="废柴逆袭" --author=辰东 --rounds=3  # 流水线+迭代
   python3 main.py full --file=chapter.txt        # 完整审计（33维+AI味，一次搞定）
+  python3 main.py corpus --author=辰东           # 查看某作者的原文语料
+  python3 main.py corpus --keyword=战斗          # 按关键词搜索语料
 """
 import sys
 import os
@@ -47,6 +52,14 @@ try:
         OpeningDiagnosis,
         EditorialPipeline,
     )
+    # 导入语料库
+    try:
+        from corpus.loader import get_corpus_loader
+        HAS_CORPUS = True
+    except ImportError:
+        HAS_CORPUS = False
+        def get_corpus_loader():
+            return None
 except ImportError as e:
     print(f"错误: 导入 skills.py 失败 - {e}")
     print("请确保 skills.py 在同一目录下。")
@@ -270,24 +283,27 @@ def cmd_style(args):
 
 
 def cmd_imitate(args):
-    """文风仿写"""
+    """文风仿写（支持原文语料参考）"""
     filepath = _parse_kv(args, "file")
     topic = _parse_kv(args, "topic")
+    author_name = _parse_kv(args, "author")
     word_count = int(_parse_kv(args, "words", "800"))
 
     text = _read_file(filepath, "样本文件")
     if text is None:
         return
     if not topic:
-        print("用法: python3 main.py imitate --file=sample.txt --topic='修仙世界的拍卖会'")
+        print("用法: python3 main.py imitate --file=sample.txt --topic='修仙世界的拍卖会' [--author=辰东]")
         return
 
     imitator = StyleImitator(NOVEL_DECONSTRUCTION_DB)
     analysis = imitator.analyze_style(text)
-    prompt = imitator.generate_imitation(analysis, topic, word_count)
+    prompt = imitator.generate_imitation(analysis, topic, word_count, author_name=author_name)
 
     print("=" * 50)
     print("  ✍️  仿写 Prompt（可直接喂给AI）")
+    if author_name:
+        print(f"  📚 原文语料参考：{author_name}")
     print("=" * 50)
     print(prompt)
 
@@ -350,9 +366,10 @@ def cmd_outline(args):
 
 
 def cmd_ghostwrite(args):
-    """枪手代笔"""
+    """枪手代笔（支持原文语料参考）"""
     outline_path = _parse_kv(args, "outline")
     style_path = _parse_kv(args, "style")
+    author_name = _parse_kv(args, "author")
     chapter = int(_parse_kv(args, "chapter", "1"))
     words = int(_parse_kv(args, "words", "3000"))
 
@@ -365,25 +382,33 @@ def cmd_ghostwrite(args):
         style_ref = _read_file(style_path, "文风参考文件")
 
     pipeline = EditorialPipeline(NOVEL_DECONSTRUCTION_DB)
-    prompt = pipeline.ghostwriter(outline_text, style_ref, chapter, words)
+    prompt = pipeline.ghostwriter(outline_text, style_ref, chapter, words, author_name=author_name)
     print("=" * 50)
     print(f"  📖 枪手代笔 Prompt（第{chapter}章，约{words}字）")
+    if author_name:
+        print(f"  📚 原文语料参考：{author_name}")
     print("=" * 50)
     print(prompt)
 
 
 def cmd_pipeline(args):
-    """完整编辑部流水线"""
+    """完整编辑部流水线（含迭代机制）"""
     concept = _parse_kv(args, "concept")
+    author_name = _parse_kv(args, "author")
+    max_rounds = int(_parse_kv(args, "rounds", "3"))
+
     if not concept:
-        print("用法: python3 main.py pipeline --concept='废柴逆袭'")
+        print("用法: python3 main.py pipeline --concept='废柴逆袭' [--author=辰东] [--rounds=3]")
         return
 
     pipeline = EditorialPipeline(NOVEL_DECONSTRUCTION_DB)
-    results = pipeline.run_pipeline(concept)
+    results = pipeline.run_pipeline(concept, author_name=author_name, max_rounds=max_rounds)
 
     print("=" * 50)
-    print("  🏭 AI编辑部流水线")
+    print("  🏭 AI编辑部流水线（迭代版）")
+    if author_name:
+        print(f"  📚 原文语料参考：{author_name}")
+    print(f"  🔄 最大迭代轮次：{max_rounds}")
     print("=" * 50)
     print()
     print(pipeline.format_scout_report(results["scout"]))
@@ -394,11 +419,77 @@ def cmd_pipeline(args):
     print(results["outline_prompt"])
     print()
     print("=" * 50)
-    print("  📋 流水线后续步骤")
+    print("  📋 流水线步骤（含迭代）")
     print("=" * 50)
     for i, step in enumerate(results["next_steps"], 1):
         print(f"  {i}. {step}")
     print()
+    if author_name:
+        print("=" * 50)
+        print("  💡 迭代写作说明")
+        print("=" * 50)
+        print("  1. 用 ghostwrite 生成初稿（自动注入原文参考）")
+        print("  2. 用 audit 审计初稿")
+        print("  3. 有严重问题则用 rewriter 修改")
+        print("  4. 重复2-3，直到没有严重问题")
+        print()
+
+
+def cmd_corpus(args):
+    """查看原文语料库"""
+    if not HAS_CORPUS:
+        print("⚠️ 语料库模块未安装，请确保 corpus/ 目录存在。")
+        return
+
+    author_name = _parse_kv(args, "author")
+    keyword = _parse_kv(args, "keyword")
+    scene_type = _parse_kv(args, "scene")
+
+    loader = get_corpus_loader()
+
+    if author_name:
+        passages = loader.get_passages(author_name, scene_type=scene_type)
+        if not passages:
+            print(f"未找到 {author_name} 的语料。")
+            print(f"可用作者：{', '.join(loader.get_all_authors())}")
+            return
+        print("=" * 50)
+        print(f"  📚 {author_name} 原文语料库")
+        if scene_type:
+            print(f"  🏷️ 场景类型：{scene_type}")
+        print("=" * 50)
+        for i, p in enumerate(passages, 1):
+            tags = "·".join(p.get("tags", []))
+            source = p.get("source", "")
+            quality = "⭐" * p.get("quality", 3)
+            print(f"\n【片段{i}】{tags} {quality}")
+            if source:
+                print(f"来源：{source}")
+            print("-" * 40)
+            print(p["text"])
+    elif keyword:
+        results = loader.search_by_keyword(keyword)
+        if not results:
+            print(f"未找到包含'{keyword}'的语料。")
+            return
+        print("=" * 50)
+        print(f"  🔍 搜索结果：{keyword}")
+        print("=" * 50)
+        for r in results:
+            print(f"\n【{r['author']}】{'·'.join(r['tags'])}")
+            print(r["text"])
+    else:
+        authors = loader.get_all_authors()
+        print("=" * 50)
+        print("  📚 原文语料库")
+        print("=" * 50)
+        print(f"\n已收录 {len(authors)} 位作者：")
+        for a in authors:
+            count = len(loader.get_passages(a))
+            print(f"  • {a}（{count}个段落）")
+        print(f"\n用法：python3 main.py corpus --author=辰东")
+        print(f"       python3 main.py corpus --keyword=战斗")
+        print(f"       python3 main.py corpus --author=辰东 --scene=battle")
 
 
 def cmd_full(args):
@@ -440,6 +531,7 @@ COMMANDS = {
     "outline": cmd_outline,
     "ghostwrite": cmd_ghostwrite,
     "pipeline": cmd_pipeline,
+    "corpus": cmd_corpus,
     "full": cmd_full,
 }
 
