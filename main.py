@@ -29,6 +29,7 @@
   python3 main.py full --file=chapter.txt        # 完整审计（33维+AI味，一次搞定）
   python3 main.py corpus --author=辰东           # 查看某作者的原文语料
   python3 main.py corpus --keyword=战斗          # 按关键词搜索语料
+  python3 main.py check --file=chapter.txt       # 版权检测（检查是否包含原文金句）
 """
 import sys
 import os
@@ -513,6 +514,19 @@ def cmd_full(args):
     print(result["ai_flavor"])
 
 
+def cmd_check(args):
+    """版权检测：检查文本中是否包含已知原文金句"""
+    filepath = _parse_kv(args, "file")
+
+    text = _read_file(filepath, "章节文件")
+    if text is None:
+        return
+
+    from skills import check_copyright_violation, format_copyright_report
+    violations = check_copyright_violation(text)
+    print(format_copyright_report(violations))
+
+
 # ============================================================
 # 入口
 # ============================================================
@@ -532,6 +546,7 @@ COMMANDS = {
     "ghostwrite": cmd_ghostwrite,
     "pipeline": cmd_pipeline,
     "corpus": cmd_corpus,
+    "check": cmd_check,
     "full": cmd_full,
 }
 

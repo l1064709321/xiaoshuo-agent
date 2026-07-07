@@ -1,7 +1,66 @@
 import json
 import sys
 import os
-from typing import List, Dict
+import re
+from typing import List, Dict, Tuple
+
+# ============================================================
+# 版权保护：已知原文金句库（用于输出检测）
+# ============================================================
+COPYRIGHT_QUOTES = [
+    "三十年河东，三十年河西，莫欺少年穷",
+    "顺为凡，逆则仙，只在心中一念间",
+    "魔前一叩三千年，回首凡尘不做仙",
+    "天不生我李淳罡，剑道万古如长夜",
+    "我们是守护者，也是一群时刻对抗疯狂和绝望的可怜虫",
+    "我要这天，再遮不住我眼",
+    "世间万物无不可交易的，只是看交易的东西，能否让对方动心罢了",
+    "我辈修士，逆天而行",
+    "没有废物的武魂，只有废物的魂师",
+    "史莱克七怪，从来都是七个人",
+    "我的剑，一往无前",
+    "老子不是好人，但也不是坏人，老子是人",
+    "我就喜欢你们看我讨厌我却又干不掉我的样子",
+    "荣耀，不是一个人的游戏",
+    "我这个人，只喜欢两种东西：权利和美女",
+    "分金定穴，寻龙点穴",
+]
+
+def check_copyright_violation(text: str, threshold: int = 8) -> list:
+    """检测生成文本中是否包含已知原文金句。"""
+    violations = []
+    for quote in COPYRIGHT_QUOTES:
+        if len(quote) < threshold:
+            continue
+        if quote in text:
+            violations.append({"quote": quote, "match_type": "完全匹配",
+                "suggestion": f"检测到原文「{quote}」，请改写为原创表达"})
+        else:
+            clean_q = re.sub(r'[，。！？、；：\"\"\'\'\s]', '', quote)
+            clean_t = re.sub(r'[，。！？、；：\"\"\'\'\s]', '', text)
+            if clean_q in clean_t and len(clean_q) >= threshold:
+                violations.append({"quote": quote, "match_type": "去标点匹配",
+                    "suggestion": f"检测到疑似原文「{quote}」，请改写为原创表达"})
+    return violations
+
+def format_copyright_report(violations: list) -> str:
+    """格式化版权检测报告。"""
+    if not violations:
+        return "✅ 版权检测通过，未发现原文复制。"
+    lines = ["⚠️ 版权检测报告", ""]
+    for v in violations:
+        lines.append(f"  🔴 [{v['match_type']}] {v['suggestion']}")
+    lines.append("\n请将上述原文改写为原创表达后再发布。")
+    return "\n".join(lines)
+
+COPYRIGHT_NOTICE = """
+【版权保护规则 - 必须遵守】
+1. 严禁直接复制任何已出版小说的原文段落、标志性台词、经典桥段
+2. 参考原文片段时，只能学习其「句式节奏」「信息密度」「断句习惯」，不能照搬文字
+3. 如果需要引用某位作者的标志性表达，必须用自己的话重新改写
+4. 生成的内容必须是原创的，不得与任何已出版作品存在大段文字重复
+5. 违反以上规则的内容将被自动检测并拒绝发布
+"""
 
 # 导入原文语料库
 try:
@@ -4200,7 +4259,7 @@ class DeconstructionPromptGenerator:
 4. **实操复用**：在每段拆解后，必须给出【写作复用公式】，教用户如何把这种逻辑套用到自己的小说里。
 5. **语言风格**：冷酷、专业、通透，像一个看透网文底层代码的黑客。
 """
-        return final_prompt
+        return final_prompt + COPYRIGHT_NOTICE
 
 
 # ==========================================
@@ -5079,7 +5138,7 @@ class StyleImitator:
 6. 心理描写要用具体念头，不要概括
 
 请直接输出仿写内容："""
-        return prompt
+        return prompt + COPYRIGHT_NOTICE
 
     def _avg_sentence_len(self, text):
         import re
@@ -5409,7 +5468,7 @@ class EditorialPipeline:
 9. 心理描写要用具体念头，不要用概括性描述
 
 请直接输出正文："""
-        return prompt
+        return prompt + COPYRIGHT_NOTICE
 
     def editor(self, text, outline=None):
         """毒舌编辑：33维审计 + AI味检测。"""
