@@ -4448,17 +4448,12 @@ class NovelAuditor:
 
     def _check_side_character_depth(self, text, outline):
         """检查配角是否沦为工具人。"""
-        # 统计配角出场后是否有独立动机/行为
+        # 网文中路人甲/功能性配角是正常存在，不需要每个配角都有完整弧光
+        # 只在以下情况报警：大量"众人震惊"式群体反应（说明配角只是气氛组）
         import re
-        # 检测"工具人"模式：出场→说话→消失，无独立行动
-        tool_patterns = [
-            (r".{2,4}说道[：:].*", "配角仅有传话功能"),
-            (r"众人.{0,10}(震惊|惊叹|目瞪口呆)", "配角仅作反应工具"),
-        ]
-        for pattern, msg in tool_patterns:
-            matches = re.findall(pattern, text)
-            if len(matches) > 5:
-                return {"level": "warning", "message": f"配角可能工具化: {msg}出现{len(matches)}次", "suggestion": "给关键配角增加独立动机和行动线"}
+        crowd_reaction = re.findall(r"众人.{0,10}(震惊|惊叹|目瞪口呆|哗然)", text)
+        if len(crowd_reaction) > 8:
+            return {"level": "info", "message": f"群体反应描写过多（{len(crowd_reaction)}次），可适当精简", "suggestion": "减少'众人震惊'式描写，用具体角色的反应替代"}
         return None
 
     def _check_relationship_progression(self, text, outline):
