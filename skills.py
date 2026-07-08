@@ -4317,7 +4317,7 @@ class NovelAuditor:
             {"id": 6,  "cat": "角色一致性", "name": "外貌描写一致性", "check": self._check_appearance_consistency},
             {"id": 7,  "cat": "角色一致性", "name": "角色时间线", "check": self._check_character_timeline},
             # 二、物资与战力 (8-13)
-            {"id": 8,  "cat": "物资与战力", "name": "法宝/技能遗忘", "check": self._check_forgotten_items},
+            # {"id": 8,  "cat": "物资与战力", "name": "法宝/技能遗忘", "check": self._check_forgotten_items},  # 已移除：网文中物品提到后立刻使用是正常模式，大量误报
             {"id": 9,  "cat": "物资与战力", "name": "战力体系崩坏", "check": self._check_power_system},
             {"id": 10, "cat": "物资与战力", "name": "物资数量矛盾", "check": self._check_resource_consistency},
             {"id": 11, "cat": "物资与战力", "name": "资源使用合理", "check": self._check_resource_usage},
@@ -4349,7 +4349,7 @@ class NovelAuditor:
             {"id": 33, "cat": "大纲与偏离", "name": "偏离大纲", "check": self._check_outline_deviation},
             {"id": 34, "cat": "大纲与偏离", "name": "对话过于密集", "check": self._check_dialogue_overload},
             {"id": 35, "cat": "大纲与偏离", "name": "背景描写过多", "check": self._check_exposition_overload},
-            {"id": 36, "cat": "大纲与偏离", "name": "旁白过多", "check": self._check_narrator_intrusion},
+            # {"id": 36, "cat": "大纲与偏离", "name": "旁白过多", "check": self._check_narrator_intrusion},  # 已移除：网文中"作者""事实上"等词是正常用法，大量误报
         ]
 
     def audit(self, text, outline=None):
