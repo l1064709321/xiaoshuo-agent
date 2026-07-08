@@ -5150,10 +5150,10 @@ class StyleImitator:
 
     def _dialogue_ratio(self, text):
         import re
-        dialogues = re.findall(r"[\"「].*?[\"」]", text)
+        # 匹配中文弯引号、直引号、日式引号
+        dialogues = re.findall(r'[\u201c\u300c\u300e"].*?[\u201d\u300d\u300f"]', text)
         dialogue_chars = sum(len(d) for d in dialogues)
         return dialogue_chars / max(len(text), 1)
-
     def _avg_paragraph_len(self, text):
         paragraphs = [p.strip() for p in text.split("\n") if p.strip()]
         return sum(len(p) for p in paragraphs) / max(len(paragraphs), 1)
