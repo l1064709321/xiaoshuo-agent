@@ -4,18 +4,18 @@
 用法:
   python3 main.py list                         # 列出所有作家
   python3 main.py list --category=玄幻仙侠     # 按分类筛选
-  python3 main.py search --name=辰东            # 按名字搜索（支持别名，如"土豆"→"天蚕土豆"）
+  python3 main.py search --name=[作者名]            # 按名字搜索（支持别名，如"土豆"→"[作者]"）
   python3 main.py search --keyword=克苏鲁       # 按关键词搜索
-  python3 main.py deconstruct --name=辰东        # 深度拆解某作家风格（基因测序级）
+  python3 main.py deconstruct --name=[作者名]        # 深度拆解某作家风格（基因测序级）
   python3 main.py deconstruct --keyword=武侠      # 按分类/关键词拆解
   python3 main.py audit --file=chapter.txt       # 33维审计章节
   python3 main.py audit --file=chapter.txt --outline=outline.txt  # 带大纲审计
   python3 main.py ai --file=chapter.txt          # AI味检测
   python3 main.py opening --file=chapter.txt     # 黄金三章诊断
   python3 main.py style --file=chapter.txt       # 文风分析（输出风格指纹）
-  python3 main.py style --file=chapter.txt --name=辰东  # 文风分析+匹配大神
+  python3 main.py style --file=chapter.txt --name=[作者名]  # 文风分析+匹配大神
   python3 main.py imitate --file=sample.txt --topic="修仙世界的拍卖会"  # 文风仿写
-  python3 main.py imitate --file=sample.txt --topic="修仙世界的拍卖会" --author=辰东  # 文风仿写+原文参考
+  python3 main.py imitate --file=sample.txt --topic="修仙世界的拍卖会" --author=[作者名]  # 文风仿写+原文参考
   python3 main.py stuck --file=chapter.txt       # 卡文诊断（识别卡点+续写路径）
   python3 main.py scout                          # 扫榜（市场趋势推荐）
   python3 main.py scout --category=玄幻仙侠      # 按分类扫榜
@@ -23,11 +23,11 @@
   python3 main.py outline --concept="废柴逆袭" --volumes=5  # 指定卷数
   python3 main.py ghostwrite --outline=outline.txt --chapter=1 --words=3000  # 枪手代笔
   python3 main.py ghostwrite --outline=outline.txt --style=sample.txt        # 指定文风代笔
-  python3 main.py ghostwrite --outline=outline.txt --author=辰东            # 代笔+原文语料参考
+  python3 main.py ghostwrite --outline=outline.txt --author=[作者名]            # 代笔+原文语料参考
   python3 main.py pipeline --concept="废柴逆袭"  # 完整编辑部流水线
-  python3 main.py pipeline --concept="废柴逆袭" --author=辰东 --rounds=3  # 流水线+迭代
+  python3 main.py pipeline --concept="废柴逆袭" --author=[作者名] --rounds=3  # 流水线+迭代
   python3 main.py full --file=chapter.txt        # 完整审计（33维+AI味，一次搞定）
-  python3 main.py corpus --author=辰东           # 查看某作者的原文语料
+  python3 main.py corpus --author=[作者名]           # 查看某作者的原文语料
   python3 main.py corpus --keyword=战斗          # 按关键词搜索语料
   python3 main.py check --file=chapter.txt       # 版权检测（检查是否包含原文金句）
 """
@@ -142,7 +142,7 @@ def cmd_search(args):
     keyword = _parse_kv(args, "keyword")
 
     if not name and not keyword:
-        print("用法: python3 main.py search --name=辰东  或  --keyword=克苏鲁")
+        print("用法: python3 main.py search --name=[作者名]  或  --keyword=克苏鲁")
         return
 
     results = []
@@ -197,7 +197,7 @@ def cmd_deconstruct(args):
     elif keyword:
         user_input = f"帮我拆解{keyword}类作者的风格"
     else:
-        print("用法: python3 main.py deconstruct --name=辰东  或  --keyword=武侠")
+        print("用法: python3 main.py deconstruct --name=[作者名]  或  --keyword=武侠")
         return
 
     skill = NovelDeconstructionSkill()
@@ -294,7 +294,7 @@ def cmd_imitate(args):
     if text is None:
         return
     if not topic:
-        print("用法: python3 main.py imitate --file=sample.txt --topic='修仙世界的拍卖会' [--author=辰东]")
+        print("用法: python3 main.py imitate --file=sample.txt --topic='修仙世界的拍卖会' [--author=[作者名]]")
         return
 
     imitator = StyleImitator(NOVEL_DECONSTRUCTION_DB)
@@ -399,7 +399,7 @@ def cmd_pipeline(args):
     max_rounds = int(_parse_kv(args, "rounds", "3"))
 
     if not concept:
-        print("用法: python3 main.py pipeline --concept='废柴逆袭' [--author=辰东] [--rounds=3]")
+        print("用法: python3 main.py pipeline --concept='废柴逆袭' [--author=[作者名]] [--rounds=3]")
         return
 
     pipeline = EditorialPipeline(NOVEL_DECONSTRUCTION_DB)
@@ -488,9 +488,9 @@ def cmd_corpus(args):
         for a in authors:
             count = len(loader.get_passages(a))
             print(f"  • {a}（{count}个段落）")
-        print(f"\n用法：python3 main.py corpus --author=辰东")
+        print(f"\n用法：python3 main.py corpus --author=[作者名]")
         print(f"       python3 main.py corpus --keyword=战斗")
-        print(f"       python3 main.py corpus --author=辰东 --scene=battle")
+        print(f"       python3 main.py corpus --author=[作者名] --scene=battle")
 
 
 def cmd_full(args):
