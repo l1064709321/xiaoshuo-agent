@@ -59,8 +59,8 @@ description: |
 4. 让模型从原文中学习 **句式节奏、信息密度、断句习惯**
 
 **效果对比**：
-- 旧版：`请用辰东风格写` → 模板废话，AI味重
-- 新版：直接塞3段辰东原文 → 模型自己"看"出文风
+- 旧版：`请用[作者]风格写` → 模板废话，AI味重
+- 新版：直接塞3段[作者]原文 → 模型自己"看"出文风
 
 ### 1.4 查看语料库
 
@@ -69,10 +69,10 @@ description: |
 python3 main.py corpus
 
 # 查看某作者的语料
-python3 main.py corpus --author=辰东
+python3 main.py corpus --author=[作者名]
 
 # 按场景筛选
-python3 main.py corpus --author=辰东 --scene=battle
+python3 main.py corpus --author=[作者名] --scene=battle
 
 # 按关键词搜索
 python3 main.py corpus --keyword=血
@@ -86,64 +86,64 @@ python3 main.py corpus --keyword=血
 
 | 作家 | 流派 / 风格定位 | 核心创作特点 |
 | :--- | :--- | :--- |
-| **辰东** | 玄幻史诗派 | 宏大世界观构建、天马行空的想象力、热血磅礴的笔法 |
-| **天蚕土豆** | 爽文教科书 | 开创"退婚流"与"打脸流"，节奏平稳，爽点密度极高 |
-| **我吃西红柿** | 升级流典范 | 升级节奏掌控力极强，行文流畅，爽感连绵不绝 |
-| **忘语** | 凡人流开创者 | 设定严密的修仙等级世界，塑造谨慎、算计的韩立式主角 |
-| **耳根** | 仙侠情怀派 | "逆"字贯穿，《仙逆》逆天命，《求魔》求本真 |
-| **爱潜水的乌贼** | 类型文革新者 | 克苏鲁+蒸汽朋克，精密世界观设定 |
-| **猫腻** | 文青热血派 | "意难平"的情绪锚点，存在主义宣言 |
-| **烽火戏诸侯** | 文青玄幻派 | 诗化短句，"雪中"意境，情怀大于爽感 |
-| **梦入神机** | 佛道魔融合派 | 佛与魔的辩证，宗教宇宙 |
-| **烟雨江南** | 暗黑史诗派 | "灰色"地带重新定义善恶 |
-| **血红** | 草根逆袭写实派 | "血淋淋"撕掉修仙美好滤镜 |
-| **宅猪** | 传统文化玄幻派 | 《易经》六十四卦化为修炼境界 |
-| **唐家三少** | 青春热血玄幻 | "武魂"体系，团队荣誉感 |
-| **会说话的肘子** | 沙雕热血流 | "负面情绪值"系统，B站弹幕文化 |
-| **蝴蝶蓝** | 全职高手派 | 电竞化语言重构战斗体系 |
-| **跳舞** | 都市异能代表 | "痞子贵族"气息，松弛感装逼 |
+| **[已隐藏]** | 玄幻史诗派 | 宏大世界观构建、天马行空的想象力、热血磅礴的笔法 |
+| **[已隐藏]** | 爽文教科书 | 开创"退婚流"与"打脸流"，节奏平稳，爽点密度极高 |
+| **[已隐藏]** | 升级流典范 | 升级节奏掌控力极强，行文流畅，爽感连绵不绝 |
+| **[已隐藏]** | 凡人流开创者 | 设定严密的修仙等级世界，塑造谨慎、算计的韩立式主角 |
+| **[已隐藏]** | 仙侠情怀派 | "逆"字贯穿，《仙逆》逆天命，《求魔》求本真 |
+| **[已隐藏]** | 类型文革新者 | 克苏鲁+蒸汽朋克，精密世界观设定 |
+| **[已隐藏]** | 文青热血派 | "意难平"的情绪锚点，存在主义宣言 |
+| **[已隐藏]** | 文青玄幻派 | 诗化短句，"雪中"意境，情怀大于爽感 |
+| **[已隐藏]** | 佛道魔融合派 | 佛与魔的辩证，宗教宇宙 |
+| **[已隐藏]** | 暗黑史诗派 | "灰色"地带重新定义善恶 |
+| **[已隐藏]** | 草根逆袭写实派 | "血淋淋"撕掉修仙美好滤镜 |
+| **[已隐藏]** | 传统文化玄幻派 | 《易经》六十四卦化为修炼境界 |
+| **[已隐藏]** | 青春热血玄幻 | "武魂"体系，团队荣誉感 |
+| **[已隐藏]** | 沙雕热血流 | "负面情绪值"系统，B站弹幕文化 |
+| **[已隐藏]** | 全职高手派 | 电竞化语言重构战斗体系 |
+| **[已隐藏]** | 都市异能代表 | "痞子贵族"气息，松弛感装逼 |
 
 ### 2.2 都市现代类
 
 | 作家 | 流派 / 风格定位 | 核心创作特点 |
 | :--- | :--- | :--- |
-| **会说话的肘子** | 搞笑吐槽流 | 轻松搞笑的吐槽文风 |
-| **志鸟村** | 硬核技术流 | 语言简洁，专注凸显人物高超技能 |
-| **王梓钧** | 都市重生 | 文笔朴实精准，节奏紧凑 |
-| **愤怒的香蕉** | 赘婿流 | "扮猪吃老虎"的极致 |
+| **[已隐藏]** | 搞笑吐槽流 | 轻松搞笑的吐槽文风 |
+| **[已隐藏]** | 硬核技术流 | 语言简洁，专注凸显人物高超技能 |
+| **[已隐藏]** | 都市重生 | 文笔朴实精准，节奏紧凑 |
+| **[已隐藏]** | 赘婿流 | "扮猪吃老虎"的极致 |
 
 ### 2.3 悬疑科幻类
 
 | 作家 | 流派 / 风格定位 | 核心创作特点 |
 | :--- | :--- | :--- |
-| **南派三叔** | 盗墓探险流 | "粽子"替代"僵尸"，地下世界恐惧 |
-| **天下霸唱** | 鬼吹灯派 | 风水玄学，让盗墓有"学术"味道 |
-| **纯洁滴小龙** | 暗黑悬疑 | 精准犀利，剖开人性褶皱 |
+| **[已隐藏]** | 盗墓探险流 | "粽子"替代"僵尸"，地下世界恐惧 |
+| **[已隐藏]** | 鬼吹灯派 | 风水玄学，让盗墓有"学术"味道 |
+| **[已隐藏]** | 暗黑悬疑 | 精准犀利，剖开人性褶皱 |
 
 ### 2.4 历史架空类
 
 | 作家 | 流派 / 风格定位 | 核心创作特点 |
 | :--- | :--- | :--- |
-| **月关** | 历史流开创者 | 擅长考据，语言朴实精准 |
-| **榴弹怕水** | 架空历史 | 天马行空又冷静克制，人物极具英雄气 |
+| **[已隐藏]** | 历史流开创者 | 擅长考据，语言朴实精准 |
+| **[已隐藏]** | 架空历史 | 天马行空又冷静克制，人物极具英雄气 |
 
 ### 2.5 女频言情类
 
 | 作家 | 流派 / 风格定位 | 核心创作特点 |
 | :--- | :--- | :--- |
-| **吱吱** | 古言宅斗代表 | "庶女/重生"题材标杆，步步惊心 |
-| **油爆香菇** | 女强争霸 | 文风诙谐幽默，架构严谨考究 |
-| **叶非夜** | 现代言情 | 文笔细腻，描绘现代都市男女情感 |
-| **苏小暖** | 现代言情 | 贴近生活，情感真实 |
+| **[已隐藏]** | 古言宅斗代表 | "庶女/重生"题材标杆，步步惊心 |
+| **[已隐藏]** | 女强争霸 | 文风诙谐幽默，架构严谨考究 |
+| **[已隐藏]** | 现代言情 | 文笔细腻，描绘现代都市男女情感 |
+| **[已隐藏]** | 现代言情 | 贴近生活，情感真实 |
 
 ### 2.6 经典文学类
 
 | 作家 | 风格定位 | 核心创作特点 |
 | :--- | :--- | :--- |
-| **古龙** | 武侠革新者 | 诗化短句、分行留白，融入推理与禅意 |
-| **还珠楼主** | 仙侠鼻祖 | 文白夹杂、华丽笔触、天马行空想象力 |
-| **梁羽生** | 儒雅名士风 | "以侠胜武"，文史底蕴深厚 |
-| **曹雪芹** | 现实主义巅峰 | 写实与诗化融合，塑造"真的人物" |
+| **[已隐藏]** | 武侠革新者 | 诗化短句、分行留白，融入推理与禅意 |
+| **[已隐藏]** | 仙侠鼻祖 | 文白夹杂、华丽笔触、天马行空想象力 |
+| **[已隐藏]** | 儒雅名士风 | "以侠胜武"，文史底蕴深厚 |
+| **[已隐藏]** | 现实主义巅峰 | 写实与诗化融合，塑造"真的人物" |
 
 ---
 
@@ -176,7 +176,7 @@ python3 main.py corpus --keyword=血
 python3 main.py stuck --file=chapter.txt
 
 # 文风仿写（带原文参考）
-python3 main.py imitate --file=sample.txt --topic="修仙世界的拍卖会" --author=辰东
+python3 main.py imitate --file=sample.txt --topic="修仙世界的拍卖会" --author=[作者名]
 ```
 
 ---
@@ -248,12 +248,12 @@ python3 main.py imitate --file=sample.txt --topic="修仙世界的拍卖会" --a
 
 | 场景 | 指令示例 |
 |:---|:---|
-| 启动全流程 | `python3 main.py pipeline --concept="赛博修仙+家族流" --author=辰东 --rounds=3` |
-| 枪手代笔 | `python3 main.py ghostwrite --outline=大纲.txt --author=天蚕土豆 --chapter=1 --words=3000` |
+| 启动全流程 | `python3 main.py pipeline --concept="赛博修仙+家族流" --author=[作者名] --rounds=3` |
+| 枪手代笔 | `python3 main.py ghostwrite --outline=大纲.txt --author=[作者名] --chapter=1 --words=3000` |
 | 审稿 | `python3 main.py audit --file=chapter.txt` |
 | 完整审计 | `python3 main.py full --file=chapter.txt` |
-| 文风仿写 | `python3 main.py imitate --file=sample.txt --topic="拍卖会" --author=忘语` |
-| 查看语料 | `python3 main.py corpus --author=辰东 --scene=battle` |
+| 文风仿写 | `python3 main.py imitate --file=sample.txt --topic="拍卖会" --author=[作者名]` |
+| 查看语料 | `python3 main.py corpus --author=[作者名] --scene=battle` |
 
 ---
 
@@ -267,11 +267,11 @@ python3 main.py list
 python3 main.py list --category=玄幻仙侠
 
 # 搜索作家（支持别名）
-python3 main.py search --name=辰东
+python3 main.py search --name=[作者名]
 python3 main.py search --keyword=克苏鲁
 
 # 深度拆解某作家风格
-python3 main.py deconstruct --name=辰东
+python3 main.py deconstruct --name=[作者名]
 python3 main.py deconstruct --keyword=武侠
 ```
 
@@ -297,11 +297,11 @@ python3 main.py full --file=chapter.txt
 ```bash
 # 文风分析
 python3 main.py style --file=chapter.txt
-python3 main.py style --file=chapter.txt --name=辰东
+python3 main.py style --file=chapter.txt --name=[作者名]
 
 # 文风仿写（带原文参考）
 python3 main.py imitate --file=sample.txt --topic="修仙世界的拍卖会"
-python3 main.py imitate --file=sample.txt --topic="拍卖会" --author=辰东
+python3 main.py imitate --file=sample.txt --topic="拍卖会" --author=[作者名]
 
 # 卡文诊断
 python3 main.py stuck --file=chapter.txt
@@ -320,11 +320,11 @@ python3 main.py outline --concept="废柴逆袭" --volumes=5
 ```bash
 # 枪手代笔（带原文语料参考）
 python3 main.py ghostwrite --outline=outline.txt --chapter=1 --words=3000
-python3 main.py ghostwrite --outline=outline.txt --author=辰东 --chapter=1
+python3 main.py ghostwrite --outline=outline.txt --author=[作者名] --chapter=1
 
 # 完整编辑部流水线（含迭代）
 python3 main.py pipeline --concept="废柴逆袭"
-python3 main.py pipeline --concept="废柴逆袭" --author=辰东 --rounds=3
+python3 main.py pipeline --concept="废柴逆袭" --author=[作者名] --rounds=3
 ```
 
 ### 7.5 语料库命令
@@ -334,10 +334,10 @@ python3 main.py pipeline --concept="废柴逆袭" --author=辰东 --rounds=3
 python3 main.py corpus
 
 # 查看某作者的语料
-python3 main.py corpus --author=辰东
+python3 main.py corpus --author=[作者名]
 
 # 按场景筛选
-python3 main.py corpus --author=辰东 --scene=battle
+python3 main.py corpus --author=[作者名] --scene=battle
 
 # 按关键词搜索
 python3 main.py corpus --keyword=血

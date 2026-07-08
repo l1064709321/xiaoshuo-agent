@@ -20,19 +20,19 @@
 python3 main.py list
 
 # 查看某作者的原文语料
-python3 main.py corpus --author=辰东
+python3 main.py corpus --author=[作者名]
 
 # 深度拆解某作家风格（含原文精读）
-python3 main.py deconstruct --name=辰东
+python3 main.py deconstruct --name=[作者名]
 
 # 枪手代笔（自动注入原文参考）
-python3 main.py ghostwrite --outline=大纲.txt --author=天蚕土豆 --chapter=1
+python3 main.py ghostwrite --outline=大纲.txt --author=[作者名] --chapter=1
 
 # 完整审计
 python3 main.py full --file=chapter.txt
 
 # 完整流水线（含迭代）
-python3 main.py pipeline --concept="废柴逆袭" --author=辰东 --rounds=3
+python3 main.py pipeline --concept="废柴逆袭" --author=[作者名] --rounds=3
 ```
 
 ## 原文语料库
@@ -54,8 +54,8 @@ python3 main.py pipeline --concept="废柴逆袭" --author=辰东 --rounds=3
 
 ### 效果对比
 
-- 旧版：`请用辰东风格写` → 模板废话，AI味重
-- 新版：直接塞3段辰东原文 → 模型自己"看"出文风
+- 旧版：`请用[作者]风格写` → 模板废话，AI味重
+- 新版：直接塞3段[作者]原文 → 模型自己"看"出文风
 
 ## 33维审计系统
 
@@ -96,11 +96,11 @@ python3 main.py pipeline --concept="废柴逆袭" --author=辰东 --rounds=3
 ```bash
 # 基础
 python3 main.py list [--category=玄幻仙侠]
-python3 main.py search --name=辰东 | --keyword=克苏鲁
-python3 main.py deconstruct --name=辰东 | --keyword=武侠
+python3 main.py search --name=[作者名] | --keyword=克苏鲁
+python3 main.py deconstruct --name=[作者名] | --keyword=武侠
 
 # 语料库
-python3 main.py corpus [--author=辰东] [--scene=battle] [--keyword=血]
+python3 main.py corpus [--author=[作者名]] [--scene=battle] [--keyword=血]
 
 # 审计
 python3 main.py audit --file=chapter.txt [--outline=outline.txt]
@@ -109,32 +109,17 @@ python3 main.py opening --file=chapter.txt
 python3 main.py full --file=chapter.txt
 
 # 创作
-python3 main.py style --file=chapter.txt [--name=辰东]
-python3 main.py imitate --file=sample.txt --topic="拍卖会" [--author=辰东]
+python3 main.py style --file=chapter.txt [--name=[作者名]]
+python3 main.py imitate --file=sample.txt --topic="拍卖会" [--author=[作者名]]
 python3 main.py stuck --file=chapter.txt
 python3 main.py scout [--category=玄幻仙侠]
 python3 main.py outline --concept="废柴逆袭" [--volumes=5]
 
 # 流水线
-python3 main.py ghostwrite --outline=大纲.txt [--author=辰东] [--chapter=1] [--words=3000]
-python3 main.py pipeline --concept="废柴逆袭" [--author=辰东] [--rounds=3]
+python3 main.py ghostwrite --outline=大纲.txt [--author=[作者名]] [--chapter=1] [--words=3000]
+python3 main.py pipeline --concept="废柴逆袭" [--author=[作者名]] [--rounds=3]
 ```
 
-## 覆盖作家（111位）
-
-**玄幻仙侠**：辰东、天蚕土豆、忘语、耳根、我吃西红柿、唐家三少、血红、梦入神机、烟雨江南、烽火戏诸侯、爱潜水的乌贼、猫腻、宅猪、方想、滚开、乱、风凌天下、横扫天涯、净无痕、流浪的蛤蟆、横扫千军、萧潜、七十二变、鹅是老五、观棋、跃千愁、知白、圣骑士的传说、青鸾峰上、汉宝、霞飞双颊、颓废龙、薪意、萧瑟、柳岸花又明、厌笔萧生、老鹰吃小鸡、黑夜弥天、小刀锋利、风御九秋、石三、黑山老鬼、苍天白鹤、阎ZK、最白的乌鸦、卖报小郎君、烟火成城、Mr星火、骷髅精灵、高楼大厦、任怨、zhttty、蚕茧里的牛、犁天、七十二编、瑞根、三戒大师、写字板、睡觉会变白、莫默、胜己、傅啸尘、石章鱼、老猪、更俗、柳暗花明、说不得大师、何常在、陈东、李行远、骁骑校、高月、齐橙、宅猪（牧神记）
-
-**都市现代**：会说话的肘子、跳舞、愤怒的香蕉、陈词懒调、全金属弹壳、丛林狼、打眼、王梓钧、志鸟村、尝谕、巫马行、中秋月明、鱼人二代
-
-**悬疑科幻**：南派三叔、天下霸唱、纯洁滴小龙
-
-**历史架空**：月关、榴弹怕水
-
-**女频言情**：吱吱、油爆香菇、丁墨、叶非夜、苏小暖、希行
-
-**游戏科幻**：蝴蝶蓝、乱、青衫取醉、72变
-
-**经典文学**：古龙、梁羽生、还珠楼主、施耐庵、罗贯中、吴承恩、曹雪芹
 
 ## 项目结构
 
