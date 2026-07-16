@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Novel Agent</title>
+<link rel="stylesheet" href="/static/style.css?v=12" />
+</head>
+<body>
+<div class="app">
+  <!-- 左侧栏 (IDE 式文件树) -->
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <span class="logo">✦</span> Novel Agent
+      <button class="btn ghost sm sidebar-close" id="sidebar-close">✕</button>
+    </div>
+
+    <!-- 项目选择器 -->
+    <div class="proj-selector dropdown">
+      <button class="btn ghost proj-select-btn" id="proj-select-btn">
+        <span id="proj-select-label">选择项目 ▾</span>
+      </button>
+      <div class="menu proj-menu" id="proj-menu">
+        <button class="proj-opt" id="new-project-opt">+ 新建项目…</button>
+      </div>
+    </div>
+
+    <!-- 文件树 -->
+    <div class="tree" id="tree">
+      <div class="tree-empty" id="tree-empty">
+        <div class="tree-empty-icon">📂</div>
+        <p>选择或新建一个项目</p>
+        <p class="muted">章节、设定、素材将在此以文件树形式展示</p>
+      </div>
+    </div>
+    <div class="tree-actions">
+      <button class="btn ghost sm" id="add-element-btn">+ 设定</button>
+      <button class="btn ghost sm" id="new-chapter-btn">+ 章节</button>
+    </div>
+  </aside>
+
+  <!-- 主对话区 -->
+  <main class="main">
+    <header class="topbar">
+      <button class="btn ghost icon-only" id="menu-btn" title="菜单">☰</button>
+      <div class="proj-info" id="proj-info">未选择项目</div>
+      <div class="status" id="status-bar"></div>
+      <div class="actions">
+        <button class="btn ghost" id="model-btn" title="配置模型">🤖 <span id="model-label">模型</span></button>
+        <button class="btn ghost" id="upload-btn">上传</button>
+        <input type="file" id="upload-input" accept=".txt,.md,.markdown,.text,.docx,.pdf,.epub,.csv,.log" hidden />
+        <div class="dropdown">
+          <button class="btn ghost" id="export-btn">导出 ▾</button>
+          <div class="menu" id="export-menu">
+            <button data-fmt="txt">TXT 纯文本</button>
+            <button data-fmt="md">Markdown</button>
+            <button data-fmt="docx">Word (.docx)</button>
+            <button data-fmt="html">HTML (可打印 PDF)</button>
+          </div>
+        </div>
+        <button class="btn ghost" id="view-chapter-btn">章节</button>
+        <button class="btn ghost" id="clear-chat-btn">清空</button>
+        <button class="btn ghost" id="settings-btn">⚙ 设置</button>
+      </div>
+    </header>
+
+    <div class="chat" id="chat">
+      <div class="empty" id="empty-state">
+        <div class="empty-icon">✦</div>
+        <h2>小说创作 Agent</h2>
+        <p>先扫榜、再拆书、定文风、建大纲、写正文、毒舌审、质检打回的完整创作闭环。</p>
+        <div class="wf-box">
+          <div class="wf-title">8 阶段长篇工作流(含审稿循环)</div>
+          <div class="wf-list" id="workflow-phases"></div>
+        </div>
+        <div class="suggestions" id="suggestions">
+          <button class="sugg" data-prompt="先帮我扫榜调研,分析 2026 当前最热的悬疑题材方向,再根据结论定文风">从扫榜开始</button>
+          <button class="sugg" data-prompt="我已经上传了对标书,帮我拆书解构,提取钩子/节奏/人设/文风等可复用模块">拆书解构</button>
+          <button class="sugg" data-prompt="帮我构思一个黄河捞尸人题材的民俗悬疑小说大纲,12章,融合中式志怪与现代悬疑">民俗悬疑大纲</button>
+          <button class="sugg" data-prompt="帮我构思一个规则怪谈/无限流小说大纲,12章,死亡游戏+逻辑破局+人性博弈">规则怪谈大纲</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="composer">
+      <div class="composer-left">
+        <button class="agent-chip" id="agent-chip" title="点击查看 agent 详情 (⌘K 查看 Agent)">
+          <span id="agent-chip-icon">🎯</span><span id="agent-chip-label">总编</span>
+        </button>
+      </div>
+      <div class="composer-input-wrap">
+        <textarea id="input" placeholder="向 agent 下达指令…  (Enter 发送, Shift+Enter 换行, / 触发命令, ⌘K 命令面板)" rows="1"></textarea>
+        <div class="slash-popup hidden" id="slash-popup"></div>
+      </div>
+      <button class="btn primary" id="send-btn">发送</button>
+    </div>
+  </main>
+
+  <!-- 右侧章节预览抽屉 -->
+  <aside class="drawer" id="drawer">
+    <div class="drawer-head">
+      <span id="drawer-title">章节内容</span>
+      <div class="drawer-actions">
+        <button class="btn ghost sm" id="drawer-edit">编辑</button>
+        <button class="btn primary sm hidden" id="drawer-save">保存</button>
+        <button class="btn ghost sm" id="drawer-close">✕</button>
+      </div>
+    </div>
+    <div class="drawer-body" id="drawer-body"></div>
+    <textarea class="drawer-edit-area hidden" id="drawer-edit-area"></textarea>
+  </aside>
+</div>
+
+<!-- toast -->
+<div class="toast-wrap" id="toast-wrap"></div>
+
+<!-- 设置面板 (右侧) -->
+<aside class="settings-panel" id="settings-panel">
+  <div class="sp-head">
+    <span>⚙ 设置</span>
+    <button class="btn ghost sm" id="sp-close">✕</button>
+  </div>
+  <div class="sp-body" id="sp-body">
+    <!-- 动态渲染 -->
+  </div>
+</aside>
+
+<!-- 遮罩 (移动端侧栏) -->
+<div class="scrim" id="scrim"></div>
+
+<!-- 命令面板 (⌘K / Ctrl+K) -->
+<div class="cmdk-overlay hidden" id="cmdk-overlay">
+  <div class="cmdk">
+    <input class="cmdk-input" id="cmdk-input" placeholder="输入命令或搜索…  (Esc 关闭)" autocomplete="off" />
+    <div class="cmdk-list" id="cmdk-list"></div>
+  </div>
+</div>
+
+<!-- Agent Panel (显示当前活跃 agent 详情) -->
+<aside class="agent-panel" id="agent-panel">
+  <div class="ap-head">
+    <span id="ap-title">Agent 详情</span>
+    <button class="btn ghost sm" id="ap-close">✕</button>
+  </div>
+  <div class="ap-body" id="ap-body"></div>
+</aside>
+
+<!-- 新建项目弹窗 -->
+<div class="modal" id="proj-modal">
+  <div class="modal-card">
+    <h3>新建小说项目</h3>
+    <label>项目名称<input id="p-name" /></label>
+    <label>类型<input id="p-genre" placeholder="悬疑/科幻/仙侠…" /></label>
+    <label>文风<input id="p-style" placeholder="冷峻/幽默/细腻…" /></label>
+    <label>核心设定<textarea id="p-premise" rows="3"></textarea></label>
+    <div class="modal-actions">
+      <button class="btn ghost" id="proj-cancel">取消</button>
+      <button class="btn primary" id="proj-ok">创建</button>
+    </div>
+  </div>
+</div>
+
+<!-- 添加设定弹窗 -->
+<div class="modal" id="elem-modal">
+  <div class="modal-card">
+    <h3>添加设定</h3>
+    <label>类型
+      <select id="e-kind">
+        <option value="character">角色</option>
+        <option value="location">地点</option>
+        <option value="lore">世界观/设定</option>
+        <option value="timeline">时间线</option>
+      </select>
+    </label>
+    <label>名称<input id="e-name" /></label>
+    <label>详情<textarea id="e-detail" rows="3"></textarea></label>
+    <div class="modal-actions">
+      <button class="btn ghost" id="elem-cancel">取消</button>
+      <button class="btn primary" id="elem-ok">添加</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js?v=12"></script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+venv/
+env/
+
+# 运行时数据与配置 (含密钥,不上传)
+config.yaml
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# 日志
+*.log
+/tmp/
+.novel-agent/
+
+# 系统
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
