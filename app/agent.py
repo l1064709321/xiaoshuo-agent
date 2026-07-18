@@ -41,6 +41,44 @@ def _check_sandbox(agent_name: str, tool_name: str) -> str | None:
     return None
 
 
+# 原理2: 上下文窗口管理。LLM 无记忆,每次把全部历史塞回去;长篇对话会撑爆窗口。
+# 滑动窗口:超阈值时保留 system + 最近若干回合,丢弃更早的纯文本对话。
+# 关键约束:assistant(tool_calls)+tool 必须成对完整,不能从中间截断,否则 tool_call_id 失配导致 API 报错。
+MAX_CONTEXT_CHARS = 14000  # 历史对话字符上限(超出触发截断)
+KEEP_LAST_TURNS = 8        # 至少保留最近这么多回合
+
+
+def _trim_for_window(msgs: list[dict]) -> list[dict]:
+    """滑动窗口截断:保留所有 system + 最近若干回合,丢弃更早的非系统消息。
+
+    回合边界 = user 消息位置;从某个 user 起到末尾的消息(含其间
+    assistant(tool_calls)+tool 链)天然完整,不会破坏 tool_call_id 配对。
+    """
+    sys_msgs = [m for m in msgs if m.get("role") == "system"]
+    rest = [m for m in msgs if m.get("role") != "system"]
+    if len(rest) <= 2:
+        return msgs
+    total = sum(len(str(m.get("content") or "")) for m in rest)
+    if total <= MAX_CONTEXT_CHARS:
+        return msgs
+    user_idx = [i for i, m in enumerate(rest) if m.get("role") == "user"]
+    if not user_idx:
+        return msgs  # 无 user 边界,不敢截断,原样返回
+    # 保留最近 KEEP_LAST_TURNS 回合;若仍超长则继续减少回合
+    cut = user_idx[-min(KEEP_LAST_TURNS, len(user_idx))]
+    while True:
+        seg = rest[cut:]
+        seg_chars = sum(len(str(m.get("content") or "")) for m in seg)
+        if seg_chars <= MAX_CONTEXT_CHARS:
+            break
+        nxt = [i for i in user_idx if i > cut]
+        if not nxt:
+            break  # 已是最少(只保留最后一个回合起),无法再减
+        cut = nxt[0]
+    note = [{"role": "system", "content": f"(更早的 {cut} 条对话已省略以节省上下文窗口)"}]
+    return sys_msgs + note + rest[cut:]
+
+
 def _build_messages(pid: str, agent_name: str = agents.DEFAULT_AGENT) -> list[dict]:
     """组装对话历史 + 项目背景 + 指定 agent 的系统提示词。"""
     msgs: list[dict] = []
@@ -71,7 +109,7 @@ def _build_messages(pid: str, agent_name: str = agents.DEFAULT_AGENT) -> list[di
                 msgs.append({"role": "assistant", "content": m["content"]})
         else:
             msgs.append({"role": m["role"], "content": m["content"]})
-    return msgs
+    return _trim_for_window(msgs)  # 原理2: 滑动窗口防爆
 
 
 def _event(obj: dict) -> str:
@@ -93,10 +131,13 @@ async def _exec_tool(
     if sandbox_err:
         return json.dumps({"error": sandbox_err}, ensure_ascii=False)
     if fname == "delegate_to_agent":
-        target = fargs.get("agent", "")
-        task = fargs.get("task", "")
+        # 参数名容错: 模型常把 agent/task 幻觉成 agent_role/agent_name/target/prompt/instruction
+        target = (fargs.get("agent") or fargs.get("agent_name") or
+                  fargs.get("agent_role") or fargs.get("target") or "")
+        task = (fargs.get("task") or fargs.get("prompt") or
+                fargs.get("instruction") or fargs.get("description") or "")
         if not agents.is_valid(target) or target == agents.DEFAULT_AGENT:
-            return json.dumps({"error": f"无法委派给 {target}"}, ensure_ascii=False)
+            return json.dumps({"error": f"无法委派给 {target!r}。请用参数 agent (枚举值之一) 与 task。"}, ensure_ascii=False)
         if depth >= agents.MAX_DELEGATE_DEPTH:
             return json.dumps({"error": f"已达最大委派深度 {agents.MAX_DELEGATE_DEPTH}"}, ensure_ascii=False)
         await emit({"type": "delegate", "from": agent_name, "to": target, "task": task, "depth": depth + 1})
@@ -131,10 +172,15 @@ async def _run_sub_agent(
     messages.append({"role": "system", "content": agents.get_prompt(agent_name)})
     messages.append({"role": "user", "content": f"[来自上级 agent 的委派任务]\n{task}"})
 
-    # 子 agent 步数限制更紧(避免单次委派吃满所有步数)
-    sub_max_steps = max(3, s.max_steps // 2)
+    # 子 agent 步数限制: 给够 8 步,让 narrative-writer 能先 match_author → get_author_reference
+    # (取作家原文 few-shot) → query_project (拿 chapter_id) → continue_writing (写正文) 完整跑完。
+    # 太紧 (如 4 步) 会导致子 agent 在取 few-shot 阶段就把步数用光,没机会写正文。
+    sub_max_steps = max(8, s.max_steps)
     for step in range(sub_max_steps):
         try:
+            # 默认用非 reasoning 模型 (如 agnes-1.5-flash),4096 够用。
+            # 若用 reasoning 模型 (agnes-2.0-flash) 需在 ModelConfig.max_tokens 调大,
+            # 但 reasoning 模型做 agent loop 工具调用决策不可靠,不推荐。
             resp = await chat(messages, s.default_model, tools=tool_schema)
         except Exception as e:
             return f"(子 agent {agent_name} 调用失败: {e})"
@@ -201,6 +247,7 @@ async def run(
             yield event_queue.pop(0)
 
         try:
+            # 同上: 默认非 reasoning 模型,4096 够用
             resp = await chat(messages, s.default_model, tools=tool_schema)
         except Exception as e:
             yield _event({"type": "error", "message": str(e)})

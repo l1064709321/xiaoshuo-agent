@@ -283,19 +283,20 @@ PROVIDER_PRESETS = [
     ], "env": "ZAI_API_KEY", "api_base": "https://open.bigmodel.cn/api/paas/v4"},
     # ---------- 月之暗面 Kimi (https://platform.kimi.com/docs/models) ----------
     # litellm 前缀: moonshot/   env: MOONSHOT_API_KEY
+    # 2026-07-16 K3 发布 (2.8万亿参数开源旗舰,100万上下文,KDA架构+MoE 896专家激活16)
+    #         K3 默认开启 Max 极致思考模式,后续将新增 Low/High 模式
+    #         K3 在 Frontend Code Arena 1679 分超越 Claude Fable 5,Agentic 任务 91.2 分
     # 2026-06-16 K2.7-Code 发布;K2.6 为多模态旗舰;K2.5 仍在售
     # 注: K2/K2-0711/K2-thinking 等旧版已于 2026-05-25 下线
     {"provider": "moonshot", "label": "月之暗面 Kimi", "models": [
+        # —— K3 当前旗舰(2026-07-16, 2.8万亿参数开源模型,100万上下文,原生视觉+Agentic) ——
+        "moonshot/kimi-k3",
         # —— K2.7 当前编程专用旗舰 ——
         "moonshot/kimi-k2.7-code",
         # —— K2.6 多模态旗舰(文本+图片+视频,256k) ——
         "moonshot/kimi-k2.6",
         # —— K2.5 上一代旗舰(仍在售,性价比高) ——
         "moonshot/kimi-k2.5",
-        # —— moonshot-v1 基础生成模型(仍在售) ——
-        "moonshot/moonshot-v1-8k",
-        "moonshot/moonshot-v1-32k",
-        "moonshot/moonshot-v1-128k",
     ], "env": "MOONSHOT_API_KEY", "api_base": "https://api.moonshot.cn/v1"},
     # ---------- 火山引擎 豆包 (https://www.volcengine.com/docs/82379/1263482) ----------
     # litellm 前缀: volcengine/   env: VOLCENGINE_API_KEY / ARK_API_KEY
@@ -375,6 +376,7 @@ PROVIDER_PRESETS = [
         "siliconflow/zai-org/GLM-5.2",
         "siliconflow/zai-org/GLM-5.1",
         # —— Kimi (moonshotai) ——
+        "siliconflow/moonshotai/Kimi-K3",
         "siliconflow/moonshotai/Kimi-K2.7-Code",
         "siliconflow/moonshotai/Kimi-K2.6",
         # —— Qwen ——

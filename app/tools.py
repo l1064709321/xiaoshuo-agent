@@ -157,6 +157,7 @@ async def generate_outline(
         [{"role": "system", "content": system}, {"role": "user", "content": user}],
         get_settings().default_model,
         temperature=0.9,
+        max_tokens=8000,
         response_format={"type": "json_object"},
     )
     content = resp["content"].strip()
@@ -201,14 +202,19 @@ async def continue_writing(
     """续写章节正文。若指定 chapter_id 则续写该章,否则续写最近一章。"""
     chapters = store.list_chapters(pid)
     if not chapter_id and not chapters:
-        return {"error": "尚无章节,请先生成大纲"}
+        return {"error": "尚无章节,请先委派 story-architect 用 generate_outline 生成大纲,章节落库后再调 continue_writing;不要重复盲调本工具"}
     target = None
     if chapter_id:
         target = store.get_chapter(chapter_id)
     if target is None and chapters:
-        target = chapters[-1]
+        # 兜底:未指定 chapter_id 时,取第一个"未写完"的章节 (而非最后一章)。
+        # 顺序写作场景下应该按 idx 递进,而不是跳到最后一章写。
+        # 优先找 has_content=False 的最小 idx;若全有正文则取最后一章续写。
+        unwritten = [c for c in chapters if not (c.get("content") or "")]
+        target = unwritten[0] if unwritten else chapters[-1]
     if target is None:
-        return {"error": "未找到目标章节"}
+        avail = [{"id": c["id"], "title": c["title"], "idx": c["idx"]} for c in chapters]
+        return {"error": "未找到目标章节,请先 query_project 查询当前项目的 chapter_id 列表,再用有效 chapter_id 调用 continue_writing", "available_chapters": avail}
 
     brief = _project_brief(pid)
     elements = _elements_block(pid)
@@ -304,28 +310,52 @@ async def scan_bestseller(
     preference: str = "",
 ) -> dict:
     """扫榜调研:基于 2026 网文市场数据 + 用户偏好,分析热门题材与流量赛道。"""
+    # 原理11 幻觉约束:声明数据来源,禁止编造具体排名/作品名/阅读量
     system = (
-        "你是网文市场分析师,精通 2026 年各大平台(起点/番茄/晋江/七猫)的热门榜单与流量趋势。"
+        "你是网文市场分析师,精通各大平台(起点/番茄/晋江/七猫)的热门榜单与流量趋势。"
+        "【数据来源声明】你掌握的是训练数据内的市场印象,非实时榜单。"
+        "不得编造具体排名数字、具体作品名、具体阅读量;只能说趋势/画像/题材热度档位。"
         "严格只输出 JSON,不要任何额外文字。"
     )
     schema_hint = {
-        "market_overview": "2026 当前市场总体趋势(100字)",
+        "market_overview": "市场总体趋势(100字)",
         "hot_genres": [
             {"genre": "题材名", "heat": "高/中/低", "platform": "主战场平台", "audience": "读者画像", "why_hot": "为什么火"}
         ],
         "recommended_direction": "结合用户偏好,推荐 1-2 个可写方向(200字)",
         "risk_warning": "红海/同质化风险提示",
+        "data_source_note": "基于训练数据推断,建议联网核实最新数据",
     }
+    # 原理5 Few-shot:用规则怪谈/民俗悬疑示意锁格式
+    few_shot = (
+        "# 示例(规则怪谈/民俗悬疑题材,仅示意输出格式)\n"
+        "输入: 目标题材=规则怪谈 用户偏好=民俗悬疑快节奏\n"
+        "输出:\n"
+        + json.dumps({
+            "market_overview": "近两年民俗悬疑与规则怪谈在免费阅读平台增速明显,",
+            "hot_genres": [
+                {"genre": "规则怪谈", "heat": "高", "platform": "番茄/七猫",
+                 "audience": "下沉市场年轻男性为主,偏好快节奏强刺激",
+                 "why_hot": "阅读门槛低、章节钩子密集、易短视频引流"}
+            ],
+            "recommended_direction": "建议优先写规则怪谈+民俗底色,首章即抛出诡异规则制造悬念。",
+            "risk_warning": "同质化严重,大量跟风作品,需在设定上做差异化。",
+            "data_source_note": "基于训练数据推断,建议联网核实最新数据",
+        }, ensure_ascii=False)
+    )
     user = (
         f"目标题材:{genre}\n用户偏好:{preference or '(未指定,请推荐当前最热赛道)'}\n"
-        f"请基于 2026 年最新市场情况,扫描热门榜单并给出题材方向建议。\n"
-        f"只输出 JSON,结构如下:\n{json.dumps(schema_hint, ensure_ascii=False)}"
+        f"请基于市场印象,扫描热门题材并给出方向建议(不要编造具体排名/作品名/阅读量)。\n"
+        f"{few_shot}\n\n"
+        f"现在请按上述示例格式输出,只输出 JSON,结构如下:\n{json.dumps(schema_hint, ensure_ascii=False)}"
     )
+    # 原理6 Prefill:强制 JSON 开头,杜绝"好的这是JSON"废话
     resp = await chat(
         [{"role": "system", "content": system}, {"role": "user", "content": user}],
         get_settings().default_model,
         temperature=0.7,
         response_format={"type": "json_object"},
+        assistant_prefill="{",
     )
     content = resp["content"].strip()
     m = re.search(r"\{.*\}", content, re.S)
@@ -366,8 +396,12 @@ async def analyze_novel(
     }
     focus_text = focus_map.get(focus, focus_map["all"])
 
+    # 原理11 幻觉约束:声明数据来源,禁止编造未在样本中出现的内容
     system = (
         "你是资深拆书编辑,擅长把畅销书拆解成可复用的创作模块。"
+        "【数据来源声明】你掌握的是训练数据内的市场印象,非实时榜单。"
+        "拆解必须基于给定样本原文,不得编造样本中不存在的具体桥段、人物名、章节标题;"
+        "样本未覆盖的部分应明确标注为推断。"
         "严格只输出 JSON,不要任何额外文字。"
     )
     schema_hint = {
@@ -379,17 +413,39 @@ async def analyze_novel(
         "core_gimmick": "核心梗提炼",
         "reusable_modules": ["可复用的剧情模块1", "可复用的剧情模块2"],
         "takeaway": "对本文创作的启示 (150字)",
+        "data_source_note": "基于训练数据推断,建议联网核实最新数据",
     }
+    # 原理5 Few-shot:用规则怪谈/民俗悬疑示意锁格式
+    few_shot = (
+        "# 示例(规则怪谈/民俗悬疑题材,仅示意输出格式)\n"
+        "输入: 拆解重点=开篇钩子 对标书样本=「第三条规则:不要在午夜后照镜子……」\n"
+        "输出:\n"
+        + json.dumps({
+            "book_type": "规则怪谈/民俗悬疑",
+            "hook_analysis": "首句即抛出禁忌规则,以冷峻语气制造不安,钩子靠规则本身的不合理性。",
+            "rhythm_structure": "短句推进,每条规则独立成段,信息密度高。",
+            "character_template": "无名叙述者+不可言说的他者,弱化人物强化氛围。",
+            "style_fingerprint": "第二人称/祈使句/留白多/不解释超自然原因。",
+            "core_gimmick": "用规则条目包裹恐惧,读者主动想象补全。",
+            "reusable_modules": ["禁忌规则条目化呈现", "留白制造想象空间"],
+            "takeaway": "首章可用规则体开篇,以禁忌清单代替背景交代。",
+            "data_source_note": "基于训练数据推断,建议联网核实最新数据",
+        }, ensure_ascii=False)
+    )
     user = (
         f"拆解重点:{focus_text}\n\n"
         f"对标书样本:\n{sample}\n\n"
-        f"请拆解这本书的可复用模块。只输出 JSON,结构如下:\n{json.dumps(schema_hint, ensure_ascii=False)}"
+        f"{few_shot}\n\n"
+        f"请按上述示例格式拆解这本书的可复用模块(只基于样本原文,不要编造样本中没有的桥段/人物名/章节名)。"
+        f"只输出 JSON,结构如下:\n{json.dumps(schema_hint, ensure_ascii=False)}"
     )
+    # 原理6 Prefill:强制 JSON 开头,杜绝"好的这是JSON"废话
     resp = await chat(
         [{"role": "system", "content": system}, {"role": "user", "content": user}],
         get_settings().default_model,
         temperature=0.6,
         response_format={"type": "json_object"},
+        assistant_prefill="{",
     )
     content = resp["content"].strip()
     m = re.search(r"\{.*\}", content, re.S)
@@ -401,6 +457,91 @@ async def analyze_novel(
         return {"error": "拆书结果解析失败", "raw": content}
     summary = "## 拆书解构结果\n" + json.dumps(data, ensure_ascii=False, indent=2)
     store.add_element(pid, "lore", f"拆书:{source or '对标书'}", summary)
+    return data
+
+
+async def review_chapter(pid: str, chapter_id: str) -> dict:
+    """毒舌审稿:总编逐章审稿,输出评分/致命问题/建议/裁决,必须引用章节原文作依据。
+
+    阶段6"毒舌编辑"专用工具,由 orchestrator 调用。结果直接返回给 orchestrator,不存 store。
+    """
+    # 1. 取章节
+    ch = store.get_chapter(chapter_id)
+    if not ch:
+        return {"error": "未找到章节"}
+    # 2. 取正文与细纲
+    content = ch.get("content") or ""
+    outline = ch.get("outline") or ""
+    if not content.strip():
+        return {"error": "该章节尚无正文"}
+
+    # 3. system prompt
+    system = (
+        "你是毒舌总编,以最挑剔眼光审稿。你不是夸夸群,写得烂就直说。"
+        "审稿维度:开篇是否3秒抓人/情绪是否到位/节奏是否拖沓/对话是否出戏/"
+        "描写是否堆砌/AI味是否明显/字数是否达标/细纲是否跑偏。"
+        "【数据来源声明】你只能基于给定章节正文与细纲评判,不得编造原文中不存在的桥段;"
+        "每个致命问题必须引用章节原文片段作依据(可核实)。"
+        "严格只输出 JSON,不要任何额外文字。"
+    )
+    # 4. schema_hint
+    schema_hint = {
+        "score": "毒舌评分 1-10 整数",
+        "fatal_issues": ["致命问题1(必须改)", "致命问题2"],
+        "suggestions": ["建议1(可改可不改)"],
+        "verdict": "打回 或 放过(评分<7一律打回;>=7且无致命问题才放过)",
+        "evidence_quotes": ["必须引用章节原文片段作为评分依据,每条致命问题至少配1处原文摘录"],
+    }
+    # 5/6. user prompt + few-shot 示例 (score=4/打回 的结构)
+    few_shot = (
+        "# 示例(仅示意输出格式,正文片段为虚构)\n"
+        "输入: 细纲=主角发现老宅镜子有异 正文开头=「他走进老宅,看到了一面镜子。镜子很旧。他觉得很奇怪。」\n"
+        "输出:\n"
+        + json.dumps({
+            "score": 4,
+            "fatal_issues": [
+                "开篇毫无钩子,平铺直叙3秒抓不住人:正文「他走进老宅,看到了一面镜子。」毫无悬念与情绪冲击。",
+                "AI味明显,描写干瘪堆砌:正文「镜子很旧。他觉得很奇怪。」全是短陈述句,缺乏细节与感官,典型AI凑字。",
+            ],
+            "suggestions": [
+                "首句可改为规则式禁忌或感官特写制造悬念,可改可不改。",
+            ],
+            "verdict": "打回",
+            "evidence_quotes": [
+                "「他走进老宅,看到了一面镜子。」",
+                "「镜子很旧。他觉得很奇怪。」",
+            ],
+        }, ensure_ascii=False)
+    )
+    # 取正文前 4000 字避免超长
+    content_preview = content[:4000]
+    user = (
+        f"# 本章细纲(对比正文是否跑偏)\n{outline or '(暂无细纲)'}\n\n"
+        f"# 章节正文(前4000字)\n{content_preview}\n\n"
+        f"# 审稿要求\n"
+        f"逐维度毒舌审稿,每个致命问题必须引用章节正文原文片段作依据(原理11:基于事实,可核实)。\n"
+        f"评分<7 一律 verdict=打回;>=7 且无致命问题才 verdict=放过。\n"
+        f"{few_shot}\n\n"
+        f"现在请按上述示例格式输出,只输出 JSON,结构如下:\n{json.dumps(schema_hint, ensure_ascii=False)}"
+    )
+    # 7. chat() 调用 (agnes-2.0-flash 等 reasoning 模型: response_format 会触发 thinking 吃光 token,
+    #    故改用 prefill 强制 JSON 开头; 容错正则提取 {...} 已能处理可能的杂质前缀)
+    resp = await chat(
+        [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        get_settings().default_model,
+        temperature=0.5,
+        max_tokens=8000,
+        assistant_prefill="{",
+    )
+    content_out = resp["content"].strip()
+    m = re.search(r"\{.*\}", content_out, re.S)
+    if m:
+        content_out = m.group(0)
+    # 8. 解析返回,不存 store
+    try:
+        data = json.loads(content_out)
+    except Exception:
+        return {"error": "审稿结果解析失败", "raw": content_out}
     return data
 
 
@@ -499,8 +640,8 @@ TOOL_SCHEMA: list[dict] = [
                               "enum": ["story-architect", "narrative-writer",
                                        "character-designer", "consistency-checker",
                                        "story-explorer", "worldbuilder"],
-                              "description": "目标专家 agent 名称"},
-                    "task": {"type": "string", "description": "委派给该 agent 的具体任务描述"},
+                              "description": "目标专家 agent 名称。参数名必须用 'agent'(不要用 agent_name/agent_role/target),值为枚举之一"},
+                    "task": {"type": "string", "description": "委派给该 agent 的具体任务描述。参数名必须用 'task'(不要用 prompt/instruction)"},
                 },
                 "required": ["agent", "task"],
             },
@@ -601,6 +742,216 @@ TOOL_SCHEMA: list[dict] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "review_chapter",
+            "description": "毒舌审稿:总编逐章审稿,输出评分/致命问题/建议/裁决,必须引用章节原文作依据。评分<7打回重写。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "chapter_id": {"type": "string", "description": "要审稿的章节 id"},
+                },
+                "required": ["chapter_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_authors",
+            "description": "技能库:列出 111 位白金作家 (按流派分类)。用于了解可参考的作家范围。",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "match_author",
+            "description": "技能库:按题材/文风/设定匹配最合适的 1-3 位作家,返回流派/核心原则/节奏公式/技法/句式/常用词。"
+            "写正文前先调此工具确定参考作家,再用 get_author_reference 取原文 few-shot。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "genre": {"type": "string", "description": "题材(如 洪荒/玄幻/悬疑),缺省用项目 genre"},
+                    "style": {"type": "string", "description": "文风(如 磅礴苍茫/冷峻克制),缺省用项目 style"},
+                    "premise": {"type": "string", "description": "核心设定,缺省用项目 premise"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_author_reference",
+            "description": "技能库:取某作家在某场景的原文精选段落 (few-shot 参考)。"
+            "原理5 Few-shot:把原文片段塞进 Prompt,让模型从原文学句式节奏/信息密度/断句习惯,"
+            "而不是用'请用 XX 风格写'的模板废话。返回的 few_shot_text 应塞进 continue_writing/polish 的 instruction。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "author": {"type": "string", "description": "作家名(如 辰东/猫腻/忘语)"},
+                    "scene": {"type": "string",
+                              "enum": ["battle", "dialogue", "environment", "psychology",
+                                       "opening", "climax", "humor", "suspense",
+                                       "emotion", "worldbuilding"],
+                              "description": "场景标签:battle=战斗/dialogue=对话/environment=环境/"
+                              "psychology=心理/opening=开篇/climax=高潮/humor=幽默/suspense=悬疑/"
+                              "emotion=感情/worldbuilding=世界观"},
+                    "limit": {"type": "integer", "description": "返回段落数,默认 3"},
+                },
+                "required": ["author"],
+            },
+        },
+    },
+    # === 技能内核工具 (skills_core.py 的 11 个能力) ===
+    {
+        "type": "function",
+        "function": {
+            "name": "deconstruct",
+            "description": "技能内核-拆书解构:输入自然语言(如'拆解古龙的武侠风格'),从 111 位作家 DB 匹配并生成"
+            "外科手术级拆解 Prompt。返回的 deconstruction_prompt 可塞给 LLM 做深度拆解分析。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "拆解需求,如'拆解古龙的武侠风格'/'拆解《凡人修仙传》的节奏'"},
+                    "return_prompt_only": {"type": "boolean", "description": "True=只返回 prompt(默认);False=返回完整结构"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "audit_novel",
+            "description": "技能内核-33维审计:对正文做 33 个维度的专业审计(人设/情节/伏笔/节奏/逻辑/文风等),"
+            "输出结构化报告。比 review_chapter 的毒舌审稿更系统全面,适合定稿前深度质检。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "待审计的正文"},
+                    "outline": {"type": "string", "description": "大纲/细纲(可选,对照审计用)"},
+                },
+                "required": ["text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "detect_ai",
+            "description": "技能内核-AI味检测:检测正文的 AI 写作痕迹(重复句式/万能连接词/抽象描写/情感标签/逻辑跳跃),"
+            "输出问题清单。写完正文后必调,去 AI 味。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "待检测的正文"},
+                },
+                "required": ["text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "diagnose_opening",
+            "description": "技能内核-黄金三章诊断:诊断开篇是否合格(钩子/节奏/人设/世界观交代),"
+            "前 1-3 章写完必调,避免开篇扑街。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "前 1-3 章正文"},
+                },
+                "required": ["text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "analyze_style",
+            "description": "技能内核-文风分析:提取正文的文风指纹(句式/节奏/用词/视角),"
+            "可用于对标分析或仿写前采集文风特征。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "待分析的正文"},
+                    "author_name": {"type": "string", "description": "指定作家名(可选,用于对标)"},
+                },
+                "required": ["text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "imitate_style",
+            "description": "技能内核-文风仿写:按参考文本的文风,仿写指定话题。"
+            "原理5 Few-shot 升级版:不只是塞原文,还先提取文风指纹再仿写。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reference_text": {"type": "string", "description": "参考原文(从原文学文风)"},
+                    "topic": {"type": "string", "description": "要仿写的话题/场景"},
+                    "word_count": {"type": "integer", "description": "仿写字数,默认 800"},
+                },
+                "required": ["reference_text", "topic"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "diagnose_stuck",
+            "description": "技能内核-卡文诊断:诊断为何写不下去,给出续写方向建议。"
+            "写正文卡住时调,而不是硬写。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "已写的正文(卡住处)"},
+                },
+                "required": ["text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "ghostwrite",
+            "description": "技能内核-枪手代笔:基于大纲+文风参考,生成章节正文并自动写入章节。"
+            "内核先用 DB 匹配成功模式生成专业写作 prompt,再自动调 LLM 生成正文。"
+            "比 continue_writing 更专业:基于 111 位作家成功模式。传 chapter_id 则自动写入该章节。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "outline_text": {"type": "string", "description": "本章细纲"},
+                    "style_ref": {"type": "string", "description": "文风参考文本(可选,从原文学文风)"},
+                    "chapter": {"type": "integer", "description": "章节序号,默认 1"},
+                    "words": {"type": "integer", "description": "目标字数,默认 3000"},
+                    "author_name": {"type": "string", "description": "指定作家文风(可选)"},
+                    "chapter_id": {"type": "string", "description": "章节 id(可选,传入则自动把生成的正文写入该章节)"},
+                },
+                "required": ["outline_text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "full_audit",
+            "description": "技能内核-完整审计:33维审计 + AI味检测,一次性出综合报告。"
+            "定稿前必调,确保质量达标。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "待审计的正文"},
+                    "outline": {"type": "string", "description": "大纲(可选)"},
+                },
+                "required": ["text"],
+            },
+        },
+    },
 ]
 
 
@@ -632,7 +983,9 @@ async def dispatch(pid: str, name: str, args: dict) -> str:
                 "stats": store.stats(pid),
                 "chapters": [
                     {"id": c["id"], "title": c["title"], "idx": c["idx"],
-                     "chars": len(c.get("content") or ""),
+                     "status": c.get("status") or "empty",
+                     "content_chars": len(c.get("content") or ""),
+                     "has_content": bool(c.get("content")),
                      "has_outline": bool(c.get("outline"))}
                     for c in store.list_chapters(pid)
                 ],
@@ -666,10 +1019,73 @@ async def dispatch(pid: str, name: str, args: dict) -> str:
                 pid, source=args.get("source", ""),
                 focus=args.get("focus", "all"),
             )
+        elif name == "review_chapter":
+            res = await review_chapter(pid, args["chapter_id"])
         elif name == "delegate_to_agent":
             # 实际执行由 agent.py 在调用前注入(因为需要访问子 agent 运行循环)
             # 若走到这里说明未注入,返回提示
             res = {"error": "delegate_to_agent 必须由 agent 运行时处理"}
+        elif name == "list_authors":
+            res = _skill_list_authors(args)
+        elif name == "match_author":
+            res = _skill_match_author(pid, args)
+        elif name == "get_author_reference":
+            res = _skill_get_author_reference(args)
+        # === 技能内核工具 (skills_core.py 的 11 个能力) ===
+        elif name == "deconstruct":
+            from . import skill_adapter
+            res = skill_adapter.deconstruct(
+                args.get("query", ""),
+                return_prompt_only=bool(args.get("return_prompt_only", True)),
+            )
+        elif name == "audit_novel":
+            from . import skill_adapter
+            res = skill_adapter.audit_novel(
+                args.get("text", ""),
+                outline=args.get("outline"),
+            )
+        elif name == "detect_ai":
+            from . import skill_adapter
+            res = skill_adapter.detect_ai(args.get("text", ""))
+        elif name == "diagnose_opening":
+            from . import skill_adapter
+            res = skill_adapter.diagnose_opening(args.get("text", ""))
+        elif name == "analyze_style":
+            from . import skill_adapter
+            res = skill_adapter.analyze_style(
+                args.get("text", ""),
+                author_name=args.get("author_name"),
+            )
+        elif name == "imitate_style":
+            from . import skill_adapter
+            res = skill_adapter.imitate_style(
+                args.get("reference_text", ""),
+                args.get("topic", ""),
+                word_count=int(args.get("word_count", 800)),
+            )
+        elif name == "diagnose_stuck":
+            from . import skill_adapter
+            res = skill_adapter.diagnose_stuck(args.get("text", ""))
+        elif name == "skill_scout":
+            from . import skill_adapter
+            res = skill_adapter.scout(args.get("genre"))
+        elif name == "ghostwrite":
+            from . import skill_adapter
+            res = await skill_adapter.ghostwrite(
+                args.get("outline_text", ""),
+                style_ref=args.get("style_ref"),
+                chapter=int(args.get("chapter", 1)),
+                words=int(args.get("words", 3000)),
+                author_name=args.get("author_name"),
+                pid=pid,
+                chapter_id=args.get("chapter_id"),
+            )
+        elif name == "full_audit":
+            from . import skill_adapter
+            res = skill_adapter.full_audit(
+                args.get("text", ""),
+                outline=args.get("outline"),
+            )
         else:
             res = {"error": f"未知工具 {name}"}
     except Exception as e:
@@ -961,3 +1377,83 @@ def schema_for(tool_names: list[str]) -> list[dict]:
     """按 agent 工具白名单过滤出对应的 tool schema。"""
     by_name = {t["function"]["name"]: t for t in TOOL_SCHEMA}
     return [by_name[n] for n in tool_names if n in by_name]
+
+
+# ---------------- 技能库工具 (Skill: 111 位作家语料 + 方法论) ----------------
+# 集成自 https://github.com/l1064709321/Online-writing-skill
+# 理念: 不存统计摘要,存原文精选段落;Prompt 直接塞原文做 few-shot (原理5 Few-shot),
+# 让模型从原文学句式节奏、信息密度、断句习惯,而不是"请用 XX 风格写"的模板废话。
+
+def _skill_list_authors(args: dict) -> dict:
+    """列出技能库中所有可用作家 (含流派分类)。"""
+    from . import skill_library
+    loader = skill_library.get_corpus_loader()
+    all_authors = loader.list_authors()
+    # 按 methodology 中的 genre 分类
+    by_genre: dict[str, list[str]] = {}
+    for a in all_authors:
+        m = skill_library.get_methodology(a)
+        g = m.get("genre", "其他") if m else "其他"
+        # 取流派第一段作分类键
+        key = g.split("/")[0].strip() if g else "其他"
+        by_genre.setdefault(key, []).append(a)
+    return {
+        "total": len(all_authors),
+        "scene_tags": skill_library.SCENE_TAGS,
+        "by_genre": by_genre,
+        "tip": "用 match_author 按题材匹配,用 get_author_reference 取原文 few-shot 参考",
+    }
+
+
+def _skill_match_author(pid: str, args: dict) -> dict:
+    """按题材/文风/设定匹配最合适的 1-3 位作家 (含方法论摘要)。"""
+    from . import skill_library
+    p = store.get_project(pid) or {}
+    genre = args.get("genre") or p.get("genre", "通用")
+    style = args.get("style") or p.get("style", "")
+    premise = args.get("premise") or p.get("premise", "")
+    matches = skill_library.match_author(genre, style, premise)
+    return {
+        "genre": genre,
+        "matched_authors": matches,
+        "tip": ("下一步: 用 get_author_reference(author=某作家, scene=battle) "
+                "取该作家在该场景的原文 few-shot,塞进 continue_writing 的 instruction 里, "
+                "让模型从原文学文风而非模板仿写。"),
+    }
+
+
+def _skill_get_author_reference(args: dict) -> dict:
+    """取某作家在某场景的原文精选段落 (few-shot 参考)。"""
+    from . import skill_library
+    author = args.get("author", "")
+    scene = args.get("scene")
+    limit = int(args.get("limit", 3))
+    if not author:
+        return {"error": "缺少 author 参数"}
+    loader = skill_library.get_corpus_loader()
+    passages = loader.get_passages(author, scene_type=scene, limit=limit)
+    if not passages:
+        return {
+            "error": f"未找到作家 {author} 在场景 {scene} 的语料",
+            "available_scenes": list(skill_library.SCENE_TAGS.keys()),
+            "tip": "scene 可选: battle/dialogue/environment/psychology/opening/climax/humor/suspense/emotion/worldbuilding",
+        }
+    few_shot = loader.get_few_shot_prompt(author, scene_type=scene, limit=limit)
+    m = skill_library.get_methodology(author)
+    return {
+        "author": author,
+        "scene": scene or "all",
+        "methodology": {
+            "core_principle": m.get("core_principle", ""),
+            "rhythm_formula": m.get("rhythm_formula", ""),
+            "technique": m.get("technique", ""),
+            "sentence_style": m.get("sentence_style", ""),
+            "common_words": m.get("common_words", []),
+        } if m else {},
+        "few_shot_text": few_shot,
+        "usage": (
+            "把 few_shot_text 塞进 continue_writing/polish 的 instruction 前部, "
+            "让模型从原文片段学句式节奏与信息密度。methodology 给出节奏公式与常用词供参考。"
+        ),
+    }
+

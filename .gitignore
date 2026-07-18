@@ -10,7 +10,11 @@ env/
 
 # 运行时数据与配置 (含密钥,不上传)
 config.yaml
-data/
+# data/ 屏蔽根目录运行时数据,但保留 app/data (技能语料库 + skills_core.py 内核,必须上传)
+/data/
+/*.db
+/*.sqlite
+/*.sqlite3
 *.db
 *.sqlite
 *.sqlite3

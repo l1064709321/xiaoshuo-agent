@@ -66,14 +66,25 @@ async def chat(
     temperature: Optional[float] = None,
     max_tokens: Optional[int] = None,
     response_format: Optional[dict] = None,
+    assistant_prefill: Optional[str] = None,
+    stop: Optional[list[str]] = None,
 ) -> dict:
-    """非流式补全。返回 {"content": str, "tool_calls": list}。"""
+    """非流式补全。返回 {"content": str, "tool_calls": list}。
+
+    assistant_prefill: 预填充 assistant 开头 (原理6 Prefill),强制模型从指定前缀续写,
+        常用于强制只输出 JSON (填 "{")。返回的 content 已拼回 prefill。
+    stop: 停止序列 (原理7 Stop Sequence),命中即停并交回控制权,常用于 ReAct loop。
+    """
     if litellm is None:
         raise LLMError("litellm 未安装,请先 pip install -r requirements.txt")
     _prepare_env(cfg)
+    msgs = list(messages)
+    use_prefill = bool(assistant_prefill) and not response_format
+    if use_prefill:
+        msgs.append({"role": "assistant", "content": assistant_prefill})
     kwargs: dict[str, Any] = {
         "model": cfg.model,
-        "messages": messages,
+        "messages": msgs,
         "temperature": temperature if temperature is not None else cfg.temperature,
         "max_tokens": max_tokens if max_tokens is not None else cfg.max_tokens,
     }
@@ -82,13 +93,19 @@ async def chat(
         kwargs["parallel_tool_calls"] = False
     if response_format:
         kwargs["response_format"] = response_format
+    if stop:
+        kwargs["stop"] = stop
     try:
         resp = await litellm.acompletion(**kwargs)
     except Exception as e:
         raise LLMError(f"LLM 调用失败: {e}") from e
     choice = resp.choices[0].message
+    # prefill 模式: 模型续写在 prefill 之后,返回的 content 不含 prefill。
+    # 这里不把 prefill 拼回 content —— 调用方若需要拼回(如纯文本续写场景)可自行拼。
+    # 工具调用场景需要模型吐完整 JSON,拼回反而会产生 {{ 双括号杂质。
+    content = choice.content or ""
     return {
-        "content": choice.content or "",
+        "content": content,
         "tool_calls": getattr(choice, "tool_calls", None) or [],
         "raw": resp,
     }
@@ -100,26 +117,39 @@ async def stream(
     *,
     temperature: Optional[float] = None,
     max_tokens: Optional[int] = None,
+    stop: Optional[list[str]] = None,
 ) -> AsyncIterator[str]:
-    """流式补全,逐 token 产出文本 (仅文本流;工具调用走非流式)。"""
+    """流式补全,逐 token 产出文本 (仅文本流;工具调用走非流式)。
+
+    stop: 停止序列 (原理7),命中即停,常用于正文续写到章节结尾标记处。
+    """
     if litellm is None:
         raise LLMError("litellm 未安装")
     _prepare_env(cfg)
+    # reasoning 模型 (如 agnes-2.0-flash) 会先吐 reasoning_content (思考过程, content=None),
+    # 再吐 content (正文)。思考也消耗 max_tokens, 故 stream 时放大额度避免正文被截断。
+    eff_max = max_tokens
+    if max_tokens is not None and max_tokens < 4000:
+        eff_max = max_tokens * 4
     kwargs: dict[str, Any] = {
         "model": cfg.model,
         "messages": messages,
         "temperature": temperature if temperature is not None else cfg.temperature,
-        "max_tokens": max_tokens if max_tokens is not None else cfg.max_tokens,
+        "max_tokens": eff_max if eff_max is not None else cfg.max_tokens,
         "stream": True,
     }
+    if stop:
+        kwargs["stop"] = stop
     try:
         stream_obj = await litellm.acompletion(**kwargs)
     except Exception as e:
         raise LLMError(f"LLM 流式调用失败: {e}") from e
     async for chunk in stream_obj:
         try:
-            delta = chunk.choices[0].delta.content
+            delta = chunk.choices[0].delta
         except Exception:
-            delta = None
-        if delta:
-            yield delta
+            continue
+        # 只 yield 正文 content; reasoning_content (思考过程) 不输出给用户
+        content = getattr(delta, "content", None)
+        if content:
+            yield content
