@@ -1158,6 +1158,194 @@ $("#settings-btn").addEventListener("click", async () => {
 });
 $("#sp-close").addEventListener("click", () => $("#settings-panel").classList.remove("open"));
 
+// ---------- 技能市场 (Skill Market) ----------
+let skData = null; // {skills: [...], status: {...}}
+
+$("#skills-btn").addEventListener("click", async () => {
+  $("#skills-panel").classList.add("open");
+  await loadSkills();
+});
+$("#skp-close").addEventListener("click", () => $("#skills-panel").classList.remove("open"));
+
+// Tab 切换
+$$(".skp-tab").forEach((tab) => {
+  tab.addEventListener("click", () => {
+    $$(".skp-tab").forEach((t) => t.classList.remove("active"));
+    tab.classList.add("active");
+    const which = tab.dataset.tab;
+    $("#skp-builtin").classList.toggle("hidden", which !== "builtin");
+    $("#skp-custom").classList.toggle("hidden", which !== "custom");
+    $("#skp-add").classList.toggle("hidden", which !== "add");
+  });
+});
+
+// 添加自定义技能表单
+$("#sk-save").addEventListener("click", async () => {
+  const name = $("#sk-name").value.trim();
+  const label = $("#sk-label").value.trim();
+  const icon = $("#sk-icon").value.trim() || "⭐";
+  const description = $("#sk-desc").value.trim();
+  const prompt = $("#sk-prompt").value.trim();
+  const agents = Array.from($$("#sk-agents input:checked")).map((c) => c.value);
+  if (!name || !label || !prompt) {
+    toast("请填写技能名、显示名、Prompt", "err");
+    return;
+  }
+  if (!/^[a-zA-Z0-9_]+$/.test(name)) {
+    toast("技能名只能含英文/数字/下划线", "err");
+    return;
+  }
+  if (agents.length === 0) {
+    toast("至少选一个适用 Agent", "err");
+    return;
+  }
+  $("#sk-save").disabled = true;
+  try {
+    const res = await api("/api/skills/custom", {
+      method: "POST",
+      body: JSON.stringify({ name, label, icon, description, prompt, agents }),
+    });
+    if (res.error) {
+      toast(res.error, "err");
+      return;
+    }
+    toast(`已添加技能: ${label}`, "ok");
+    // 清空表单
+    $("#sk-name").value = "";
+    $("#sk-label").value = "";
+    $("#sk-icon").value = "";
+    $("#sk-desc").value = "";
+    $("#sk-prompt").value = "";
+    // 切回自定义 Tab 并刷新
+    document.querySelector('.skp-tab[data-tab="custom"]').click();
+    await loadSkills();
+  } catch (e) {
+    toast("保存失败: " + e.message, "err");
+  } finally {
+    $("#sk-save").disabled = false;
+  }
+});
+$("#sk-reset").addEventListener("click", () => {
+  $("#sk-name").value = "";
+  $("#sk-label").value = "";
+  $("#sk-icon").value = "";
+  $("#sk-desc").value = "";
+  $("#sk-prompt").value = "";
+});
+
+async function loadSkills() {
+  try {
+    skData = await api("/api/skills");
+    renderSkills();
+  } catch (e) {
+    $("#skp-status").textContent = "加载失败: " + e.message;
+  }
+}
+
+function renderSkills() {
+  if (!skData) return;
+  const skills = skData.skills || [];
+  const status = skData.status || {};
+  const builtin = skills.filter((s) => s.kind !== "custom");
+  const custom = skills.filter((s) => s.kind === "custom");
+
+  // 状态汇总
+  const enabledCount = skills.filter((s) => s.enabled).length;
+  const totalCount = skills.length;
+  const totalUsage = skills.reduce((sum, s) => sum + (s.usage || 0), 0);
+  $("#skp-status").innerHTML =
+    `已启用 <b>${enabledCount}</b> / ${totalCount} 项　·　累计调用 <b>${totalUsage}</b> 次` +
+    (status.builtin_total != null ? `　·　内置 ${status.builtin_total} / 自定义 ${status.custom_total}` : "");
+
+  // 内置 grid
+  $("#skp-builtin-grid").innerHTML = builtin.map(renderSkillCard).join("");
+
+  // 自定义 grid
+  if (custom.length === 0) {
+    $("#skp-custom-grid").innerHTML = "";
+    $("#skp-custom-empty").classList.remove("hidden");
+  } else {
+    $("#skp-custom-grid").innerHTML = custom.map(renderSkillCard).join("");
+    $("#skp-custom-empty").classList.add("hidden");
+  }
+
+  // 绑定开关 + 删除按钮
+  $$("#skp-builtin-grid .skill-toggle input").forEach((inp) => {
+    inp.addEventListener("change", () => toggleSkill(inp.dataset.name));
+  });
+  $$("#skp-custom-grid .skill-toggle input").forEach((inp) => {
+    inp.addEventListener("change", () => toggleSkill(inp.dataset.name));
+  });
+  $$("#skp-custom-grid .sc-del").forEach((btn) => {
+    btn.addEventListener("click", () => deleteCustomSkill(btn.dataset.name));
+  });
+}
+
+function renderSkillCard(s) {
+  const agents = (s.agents || []).map((a) => `<span class="a-chip">${esc(a)}</span>`).join("");
+  const catLabel = s.category || (s.kind === "custom" ? "custom" : "");
+  const usage = s.usage || 0;
+  const toggle = `<label class="skill-toggle">
+    <input type="checkbox" data-name="${esc(s.name)}" ${s.enabled ? "checked" : ""} />
+    <span class="track"></span>
+  </label>`;
+  const delBtn = s.kind === "custom"
+    ? `<button class="sc-del" data-name="${esc(s.name)}" title="删除">🗑</button>`
+    : "";
+  return `<div class="skill-card ${s.enabled ? "enabled" : "disabled"}">
+    <div class="sc-head">
+      <span class="sc-icon">${esc(s.icon || "⭐")}</span>
+      <span class="sc-name">${esc(s.label || s.name)}</span>
+      <span class="sc-cat ${esc(catLabel)}">${esc(catLabel || "skill")}</span>
+    </div>
+    ${s.description ? `<div class="sc-desc">${esc(s.description)}</div>` : ""}
+    <div class="sc-meta">
+      <div class="agents">${agents}</div>
+      <span class="usage">×${usage}</span>
+    </div>
+    <div class="sc-actions">
+      ${delBtn}
+      ${toggle}
+    </div>
+  </div>`;
+}
+
+async function toggleSkill(name) {
+  try {
+    const res = await api(`/api/skills/${encodeURIComponent(name)}/toggle`, { method: "POST" });
+    if (res.error) {
+      toast(res.error, "err");
+      await loadSkills();
+      return;
+    }
+    // 局部更新 (避免整列表闪烁)
+    if (skData) {
+      const s = skData.skills.find((x) => x.name === name);
+      if (s) s.enabled = res.enabled;
+      renderSkills();
+    }
+    toast(`${name} 已${res.enabled ? "启用" : "禁用"}`, "ok", 1500);
+  } catch (e) {
+    toast("切换失败: " + e.message, "err");
+    await loadSkills();
+  }
+}
+
+async function deleteCustomSkill(name) {
+  if (!confirm(`确定删除技能「${name}」?`)) return;
+  try {
+    const res = await api(`/api/skills/custom/${encodeURIComponent(name)}`, { method: "DELETE" });
+    if (res.error) {
+      toast(res.error, "err");
+      return;
+    }
+    toast(`已删除: ${name}`, "ok");
+    await loadSkills();
+  } catch (e) {
+    toast("删除失败: " + e.message, "err");
+  }
+}
+
 async function loadSettings() {
   spData = await api("/api/settings");
   spSelectedProvider = null;

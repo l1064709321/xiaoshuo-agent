@@ -2,21 +2,32 @@
 
 三层架构:
 - 记忆层 (data/corpus/authors/*.json): 111 位作家的原文精选段落,按场景标签索引
-- 能力层 (本文件): CorpusLoader 检索原文作 few-shot + methodology 方法论查询 + 作者匹配
+- 能力层 (本文件 + data/corpus/loader.py): CorpusLoader 检索原文作 few-shot + methodology 方法论查询 + 作者匹配
 - 调用层 (tools.py 暴露为 3 个工具): list_authors / match_author / get_author_reference
 
 集成自: https://github.com/l1064709321/Online-writing-skill
 理念: 不存统计摘要,存原文精选段落;Prompt 直接塞原文做 few-shot (原理5 Few-shot),
 让模型从原文学句式节奏、信息密度、断句习惯,而不是"请用 XX 风格写"的模板废话。
+
+注: CorpusLoader 已统一到 data/corpus/loader.py (单一来源), 本文件只复用不再重复实现。
 """
 from __future__ import annotations
 
 import json
 import os
+import sys
 from typing import Optional
 
+# 把 data/ 加入 sys.path 以便 import corpus.loader
+_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+if _DATA_DIR not in sys.path:
+    sys.path.insert(0, _DATA_DIR)
+
+# 复用 loader.py 中的 CorpusLoader (单一来源,不再重复实现)
+from corpus.loader import CorpusLoader, get_corpus_loader  # noqa: E402
+
 # 语料库根目录 (app/data/corpus)
-_CORPUS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "corpus")
+_CORPUS_DIR = os.path.join(_DATA_DIR, "corpus")
 _AUTHORS_DIR = os.path.join(_CORPUS_DIR, "authors")
 _METHODOLOGY_PATH = os.path.join(_CORPUS_DIR, "methodology.json")
 
@@ -35,100 +46,14 @@ SCENE_TAGS = {
 }
 
 
-# ---------------- 记忆层: 原文语料检索 ----------------
-class CorpusLoader:
-    """按作者+场景标签检索精选段落,供 Prompt 做 few-shot 参考。"""
+# 兼容别名: skill_library 旧版用 list_authors() 名字, loader.py 用 get_all_authors()
+# 给 CorpusLoader 加一个 list_authors 方法, 转发到 get_all_authors
+def _list_authors_compat(self) -> list[str]:
+    return sorted(self.get_all_authors())
 
-    def __init__(self, authors_dir: str = _AUTHORS_DIR):
-        self.authors_dir = authors_dir
-        self._cache: dict[str, list[dict]] = {}
 
-    def _load_author(self, author_name: str) -> list[dict]:
-        if author_name in self._cache:
-            return self._cache[author_name]
-        filepath = None
-        if os.path.isdir(self.authors_dir):
-            for fname in os.listdir(self.authors_dir):
-                if not fname.endswith(".json"):
-                    continue
-                name_part = fname.replace(".json", "")
-                if author_name in name_part or name_part in author_name:
-                    filepath = os.path.join(self.authors_dir, fname)
-                    break
-        if filepath is None or not os.path.exists(filepath):
-            return []
-        with open(filepath, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        passages = data.get("passages", [])
-        self._cache[author_name] = passages
-        return passages
+CorpusLoader.list_authors = _list_authors_compat  # type: ignore[attr-defined]
 
-    def get_passages(
-        self,
-        author_name: str,
-        scene_type: Optional[str] = None,
-        limit: int = 3,
-        min_words: int = 10,
-        max_words: int = 800,
-    ) -> list[dict]:
-        passages = self._load_author(author_name)
-        if not passages:
-            return []
-        filtered = passages
-        if scene_type:
-            filtered = [p for p in filtered if scene_type in p.get("tags", [])]
-        filtered = [p for p in filtered if min_words <= len(p.get("text", "")) <= max_words]
-        filtered.sort(key=lambda p: p.get("quality", 3), reverse=True)
-        return filtered[:limit]
-
-    def get_few_shot_prompt(
-        self,
-        author_name: str,
-        scene_type: Optional[str] = None,
-        limit: int = 3,
-    ) -> str:
-        """生成 few-shot 参考文本,可直接塞进 Prompt。"""
-        passages = self.get_passages(author_name, scene_type, limit)
-        if not passages:
-            return ""
-        parts = []
-        for i, p in enumerate(passages, 1):
-            tag_str = "·".join(p.get("tags", []))
-            source = p.get("source", "")
-            header = f"【参考片段{i} - {author_name}·{tag_str}】"
-            if source:
-                header += f"（{source}）"
-            parts.append(f"{header}\n{p['text']}")
-        return "\n\n---\n\n".join(parts)
-
-    def list_authors(self) -> list[str]:
-        if not os.path.isdir(self.authors_dir):
-            return []
-        return sorted(
-            fname.replace(".json", "")
-            for fname in os.listdir(self.authors_dir)
-            if fname.endswith(".json")
-        )
-
-    def search_by_keyword(self, keyword: str, limit: int = 5) -> list[dict]:
-        results = []
-        if not os.path.isdir(self.authors_dir):
-            return results
-        for fname in os.listdir(self.authors_dir):
-            if not fname.endswith(".json"):
-                continue
-            author_name = fname.replace(".json", "")
-            passages = self._load_author(author_name)
-            for p in passages:
-                if keyword in p.get("text", "") or keyword in str(p.get("tags", [])):
-                    results.append({
-                        "author": author_name,
-                        "text": p["text"][:200] + "..." if len(p["text"]) > 200 else p["text"],
-                        "tags": p.get("tags", []),
-                        "quality": p.get("quality", 3),
-                    })
-        results.sort(key=lambda x: x["quality"], reverse=True)
-        return results[:limit]
 
 
 # ---------------- 能力层: 方法论查询 ----------------
@@ -214,11 +139,5 @@ def match_author(genre: str, style: str = "", premise: str = "") -> list[dict]:
 
 
 # ---------------- 全局单例 ----------------
-_loader: Optional[CorpusLoader] = None
-
-
-def get_corpus_loader() -> CorpusLoader:
-    global _loader
-    if _loader is None:
-        _loader = CorpusLoader()
-    return _loader
+# get_corpus_loader 已从 corpus.loader 导入 (上方 import),
+# 不再在此处重复定义,统一使用 loader.py 的单例。

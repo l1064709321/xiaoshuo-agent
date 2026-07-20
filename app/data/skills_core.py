@@ -4262,29 +4262,8 @@ class DeconstructionPromptGenerator:
         return final_prompt + COPYRIGHT_NOTICE
 
 
-# ==========================================
-# 5. 统一调度 Skill 门面
-# ==========================================
-
-
-class NovelDeconstructionSkill:
-    def __init__(self):
-        self.parser = DeconstructionParser()
-        self.matcher = DeconstructionMatcher(NOVEL_DECONSTRUCTION_DB)
-        self.generator = DeconstructionPromptGenerator()
-
-    def execute(self, user_input: str, return_prompt_only: bool = True) -> str:
-        intent = self.parser.parse(user_input)
-        matched_data = self.matcher.match(intent)
-        if not matched_data:
-            available = [a["name"] for a in NOVEL_DECONSTRUCTION_DB[:20]]
-            hint = "、".join(available) + " 等"
-            return f"⚠️ 未匹配到相关作者。\n\n当前数据库包含以下作者：{hint}\n\n请尝试输入作者名、简称或分类关键词。"
-        final_prompt = self.generator.generate(intent, matched_data)
-        if return_prompt_only:
-            return final_prompt
-        else:
-            return json.dumps({"intent": intent, "matched_authors": [a["name"] for a in matched_data], "final_prompt": final_prompt}, ensure_ascii=False, indent=2)
+# (此处原有一个早期残缺的 NovelDeconstructionSkill stub, 已被文件末尾的完整版本覆盖,
+#  为避免混淆已删除。完整的 NovelDeconstructionSkill 在文件末尾定义,含 9 个子模块。)
 
 #!/usr/bin/env python3
 """

@@ -602,11 +602,30 @@ WORKFLOW_PHASES = [
 
 
 def get_prompt(name: str) -> str:
-    return AGENT_PROMPTS.get(name, AGENT_PROMPTS[DEFAULT_AGENT])
+    base = AGENT_PROMPTS.get(name, AGENT_PROMPTS[DEFAULT_AGENT])
+    # 注入用户已启用的自定义技能 prompt (skill_market 持久化在 ~/.novel-agent/)
+    try:
+        from . import skill_market
+        custom_prompts = skill_market.get_custom_skill_prompts([name, DEFAULT_AGENT])
+        if custom_prompts:
+            return base + "\n\n---\n\n# 🧩 用户自定义技能 (Skill Market)\n\n" + custom_prompts
+    except Exception:
+        pass
+    return base
 
 
 def get_tools(name: str) -> list[str]:
-    return AGENT_TOOLS.get(name, AGENT_TOOLS[DEFAULT_AGENT])
+    """运行时返回该 agent 的工具列表,已根据 skill_market 启用状态过滤。
+    注: 自定义技能目前是 prompt 注入,不作为独立工具暴露给 LLM;
+        若要支持自定义工具,需在 tools.py 中扩展 dispatch。
+    """
+    tools = AGENT_TOOLS.get(name, AGENT_TOOLS[DEFAULT_AGENT])
+    try:
+        from . import skill_market
+        return skill_market.get_enabled_tools_for_agent(name, tools)
+    except Exception:
+        # skill_market 加载失败时,回退到完整工具列表 (不阻塞 agent)
+        return tools
 
 
 def is_valid(name: str) -> bool:

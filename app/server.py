@@ -191,6 +191,47 @@ def list_agents():
     }
 
 
+# ---------- 技能市场 (Skill Market) ----------
+@app.get("/api/skills")
+def list_skills():
+    """列出所有技能 (内置 + 自定义) + 启用状态 + 调用次数。"""
+    from . import skill_market
+    return {
+        "skills": skill_market.list_skills(),
+        "status": skill_market.skill_market_status(),
+    }
+
+
+@app.post("/api/skills/{name}/toggle")
+def toggle_skill(name: str):
+    """切换某技能的启用/禁用状态。"""
+    from . import skill_market
+    return skill_market.toggle_skill(name)
+
+
+@app.post("/api/skills/custom")
+def add_custom_skill(body: dict):
+    """添加自定义技能 (前端表单: name + label + description + prompt + agents + icon)。"""
+    from . import skill_market
+    name = body.get("name", "")
+    label = body.get("label", "")
+    description = body.get("description", "")
+    prompt = body.get("prompt", "")
+    agents = body.get("agents", ["orchestrator", "narrative-writer"])
+    icon = body.get("icon", "⭐")
+    return skill_market.add_custom_skill(
+        name=name, label=label, description=description,
+        prompt=prompt, agents=agents, icon=icon,
+    )
+
+
+@app.delete("/api/skills/custom/{name}")
+def delete_custom_skill(name: str):
+    """删除自定义技能 (内置技能不可删)。"""
+    from . import skill_market
+    return skill_market.remove_custom_skill(name)
+
+
 # ---------- 上传小说 (多格式,供续写) ----------
 @app.post("/api/projects/{pid}/upload")
 async def upload_novel(

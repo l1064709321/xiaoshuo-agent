@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Novel Agent</title>
-<link rel="stylesheet" href="/static/style.css?v=28" />
+<link rel="stylesheet" href="/static/style.css?v=30" />
 </head>
 <body>
 <div class="app">
@@ -59,6 +59,10 @@
         <button class="btn ghost icon-btn with-label" id="clear-chat-btn" title="清空对话">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
           <span class="btn-label">清空</span>
+        </button>
+        <button class="btn ghost icon-btn with-label" id="skills-btn" title="技能市场 (启用/禁用/添加自定义技能)">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3 7h7l-5.5 4.5L18 21l-6-4-6 4 1.5-7.5L2 9h7z"/></svg>
+          <span class="btn-label">技能</span>
         </button>
         <button class="btn ghost icon-btn with-label" id="settings-btn" title="设置 (模型/参数/密钥)">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -139,6 +143,82 @@
   </div>
 </aside>
 
+<!-- 技能市场面板 (右侧) -->
+<aside class="skills-panel" id="skills-panel">
+  <div class="sp-head">
+    <span>🧩 技能市场</span>
+    <button class="btn ghost sm" id="skp-close">✕</button>
+  </div>
+  <div class="sp-body" id="skp-body">
+    <!-- 状态汇总 -->
+    <div class="skp-status" id="skp-status">加载中…</div>
+
+    <!-- Tabs -->
+    <div class="skp-tabs">
+      <button class="skp-tab active" data-tab="builtin">内置技能</button>
+      <button class="skp-tab" data-tab="custom">自定义</button>
+      <button class="skp-tab" data-tab="add">+ 添加</button>
+    </div>
+
+    <!-- 内置技能 -->
+    <div class="skp-section" id="skp-builtin">
+      <div class="skp-grid" id="skp-builtin-grid"></div>
+    </div>
+
+    <!-- 自定义技能 -->
+    <div class="skp-section hidden" id="skp-custom">
+      <div class="skp-grid" id="skp-custom-grid"></div>
+      <div class="skp-empty hidden" id="skp-custom-empty">
+        <div class="skp-empty-icon">📝</div>
+        <p>还没有自定义技能</p>
+        <p class="muted">切到「+ 添加」可创建自己的技能 Prompt</p>
+      </div>
+    </div>
+
+    <!-- 添加自定义技能表单 -->
+    <div class="skp-section hidden" id="skp-add">
+      <div class="skp-form">
+        <label class="skp-field">
+          <span class="lbl">技能名 (英文/数字/下划线,作为唯一 ID)</span>
+          <input id="sk-name" placeholder="例如 my_writing_style" autocomplete="off" />
+        </label>
+        <label class="skp-field">
+          <span class="lbl">显示名</span>
+          <input id="sk-label" placeholder="例如 我的写作风格" autocomplete="off" />
+        </label>
+        <label class="skp-field">
+          <span class="lbl">图标 (单个 emoji)</span>
+          <input id="sk-icon" placeholder="⭐" maxlength="4" autocomplete="off" />
+        </label>
+        <label class="skp-field">
+          <span class="lbl">描述</span>
+          <input id="sk-desc" placeholder="一句话说清这个技能干什么" autocomplete="off" />
+        </label>
+        <label class="skp-field">
+          <span class="lbl">适用 Agent (多选)</span>
+          <div class="skp-agents" id="sk-agents">
+            <label class="chip"><input type="checkbox" value="orchestrator" checked><span>总编</span></label>
+            <label class="chip"><input type="checkbox" value="story-architect"><span>架构师</span></label>
+            <label class="chip"><input type="checkbox" value="narrative-writer" checked><span>主笔</span></label>
+            <label class="chip"><input type="checkbox" value="character-designer"><span>角色师</span></label>
+            <label class="chip"><input type="checkbox" value="consistency-checker"><span>质检员</span></label>
+            <label class="chip"><input type="checkbox" value="story-explorer"><span>资料员</span></label>
+            <label class="chip"><input type="checkbox" value="worldbuilder"><span>设定管理员</span></label>
+          </div>
+        </label>
+        <label class="skp-field">
+          <span class="lbl">Prompt (注入到所选 Agent 的 system prompt 末尾)</span>
+          <textarea id="sk-prompt" rows="8" placeholder="在此写你的技能指令。例如:&#10;你写作时必须遵守以下规则:&#10;1. 每段不超过 3 行&#10;2. 对话占比 ≥ 40%&#10;3. 禁用「命运」「如潮水」等词"></textarea>
+        </label>
+        <div class="skp-form-actions">
+          <button class="btn ghost" id="sk-reset">清空</button>
+          <button class="btn primary" id="sk-save">保存技能</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</aside>
+
 <!-- 遮罩 (移动端侧栏) -->
 <div class="scrim" id="scrim"></div>
 
@@ -195,6 +275,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=31"></script>
+<script src="/static/app.js?v=33"></script>
 </body>
 </html>
