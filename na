@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# Novel Agent 一键管理命令
+# 用法:
+#   na          启动服务 (默认)
+#   na start    启动
+#   na stop     停止
+#   na restart  重启
+#   na status   查看状态
+#   na log      查看日志 (实时滚动,Ctrl+C 退出)
+#   na url      打印访问地址
+
+CMD="${1:-start}"
+# 解析符号链接的真实路径,避免从 /usr/local/bin/na 调用时拿到错误目录
+SOURCE="${BASH_SOURCE[0]:-$0}"
+while [ -L "$SOURCE" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ "$SOURCE" != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+PID_FILE="/tmp/novel-agent.pid"
+LOG_FILE="/tmp/novel-agent.log"
+PORT=8000
+URL="http://localhost:${PORT}/"
+
+# 列出访问地址 (统一用 localhost,跨设备由各自 localhost 解析)
+list_access_urls() {
+  echo ""
+  echo "访问地址: http://localhost:${PORT}/"
+  echo "  (在哪个设备打开就指向哪个设备 — 电脑打开指电脑,手机打开指手机)"
+  echo ""
+}
+
+is_running() {
+  [ -f "$PID_FILE" ] || return 1
+  local pid; pid=$(cat "$PID_FILE" 2>/dev/null)
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+do_start() {
+  if is_running; then
+    echo "✓ 已在运行 (PID $(cat $PID_FILE)) → $URL"
+    return 0
+  fi
+  cd "$DIR" || { echo "✗ 找不到目录: $DIR"; return 1; }
+  if [ ! -f "run.py" ]; then
+    echo "✗ 找不到 run.py (当前目录: $DIR)"
+    return 1
+  fi
+  echo "==> 检查依赖..."
+  python -m pip install -q -r requirements.txt 2>&1 | tail -2 || true
+  echo "==> 启动服务 (目录: $DIR)..."
+  nohup python run.py > "$LOG_FILE" 2>&1 &
+  echo $! > "$PID_FILE"
+  echo "==> 等待就绪..."
+  for i in $(seq 1 15); do
+    code=$(curl -s -o /dev/null -w "%{http_code}" "$URL" 2>/dev/null || echo 000)
+    if [ "$code" = "200" ]; then
+      echo "✓ 服务已启动 → $URL  (PID $(cat $PID_FILE))"
+      list_access_urls
+      return 0
+    fi
+    sleep 1
+  done
+  echo "✗ 启动失败,日志:"
+  tail -20 "$LOG_FILE"
+  return 1
+}
+
+do_stop() {
+  if ! is_running; then
+    echo "✗ 服务未运行"
+    rm -f "$PID_FILE"
+    return 0
+  fi
+  local pid; pid=$(cat "$PID_FILE")
+  pkill -f "run.py" 2>/dev/null || true
+  sleep 1
+  echo "✓ 已停止 (PID $pid)"
+  rm -f "$PID_FILE"
+}
+
+do_status() {
+  if is_running; then
+    echo "● 运行中  PID $(cat $PID_FILE)  →  $URL"
+    list_access_urls
+  else
+    echo "○ 未运行"
+  fi
+}
+
+do_log() {
+  if [ ! -f "$LOG_FILE" ]; then echo "✗ 日志不存在"; exit 1; fi
+  echo "==> 实时日志 (Ctrl+C 退出):"
+  tail -n 50 -f "$LOG_FILE"
+}
+
+case "$CMD" in
+  start)   do_start ;;
+  stop)    do_stop ;;
+  restart) do_stop; do_start ;;
+  status)  do_status ;;
+  log)     do_log ;;
+  url)     list_access_urls ;;
+  *) echo "用法: na [start|stop|restart|status|log|url]"; exit 1 ;;
+esac

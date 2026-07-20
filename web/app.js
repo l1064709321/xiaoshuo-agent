@@ -10,6 +10,50 @@ let currentAgent = "orchestrator";        // 入口 agent(固定为 orchestrator
 let activeAgent = "orchestrator";           // 当前活跃 agent(由 delegate 事件自动更新)
 let workflowPhases = [];
 let readonlyAgents = [];
+
+// ---- 主题 (浅色/深色/护眼/暗夜紫/羊皮纸) ----
+const THEMES = {
+  light:   { label: "浅色白",  vars: { "--paper":"#ffffff", "--paper2":"#f7f7f8", "--paper3":"#eef0f2", "--paper4":"#e4e7ea", "--ink":"#1a1a1a", "--ink2":"#4a4a4a", "--muted":"#8a8a8a", "--border":"#e2e2e2", "--border2":"#d0d0d0", "--accent":"#c43d3d", "--blue":"#3d6b8b", "--green":"#2d7a4a", "--yellow":"#9a6b1f", "--red":"#c43d3d" } },
+  dark:    { label: "深色夜",  vars: { "--paper":"#1e1f22", "--paper2":"#18191c", "--paper3":"#2a2b2f", "--paper4":"#36373b", "--ink":"#e6e6e6", "--ink2":"#b0b0b0", "--muted":"#7a7a7a", "--border":"#3a3b3f", "--border2":"#4a4b4f", "--accent":"#e57070", "--blue":"#7ab0d4", "--green":"#5fb878", "--yellow":"#d4a256", "--red":"#e57070" } },
+  eye:     { label: "护眼绿",  vars: { "--paper":"#c7e3c7", "--paper2":"#b8dab8", "--paper3":"#a8d0a8", "--paper4":"#98c698", "--ink":"#1f3a1f", "--ink2":"#3a5a3a", "--muted":"#6a8a6a", "--border":"#9ac89a", "--border2":"#88b488", "--accent":"#8a3d3d", "--blue":"#3d5a7a", "--green":"#2d6a4a", "--yellow":"#8a6b1f", "--red":"#8a3d3d" } },
+  sepia:   { label: "羊皮纸",  vars: { "--paper":"#f6efd9", "--paper2":"#efe5c2", "--paper3":"#e6d9a8", "--paper4":"#dcc88a", "--ink":"#2e1f15", "--ink2":"#5a4530", "--muted":"#8a7a5a", "--border":"#d8c890", "--border2":"#c8b870", "--accent":"#a13d3d", "--blue":"#3d6b8b", "--green":"#2d7a4a", "--yellow":"#9a6b1f", "--red":"#a13d3d" } },
+  purple:  { label: "暗夜紫",  vars: { "--paper":"#221a2e", "--paper2":"#1a1424", "--paper3":"#2e2440", "--paper4":"#3a2e52", "--ink":"#e8dff5", "--ink2":"#b8a8d4", "--muted":"#7a6a9a", "--border":"#3a2e52", "--border2":"#4a3a68", "--accent":"#c47a9a", "--blue":"#7a9ad4", "--green":"#5fb878", "--yellow":"#d4a256", "--red":"#c47a7a" } },
+};
+let currentTheme = localStorage.getItem("na-theme") || "sepia";
+let currentFontScale = parseFloat(localStorage.getItem("na-font-scale") || "1");
+
+function applyTheme(name) {
+  const t = THEMES[name] || THEMES.sepia;
+  const root = document.documentElement;
+  for (const [k, v] of Object.entries(t.vars)) root.style.setProperty(k, v);
+  localStorage.setItem("na-theme", name);
+  currentTheme = name;
+}
+
+function applyFontScale(s) {
+  const root = document.documentElement;
+  root.style.setProperty("--font-scale", String(s));
+  // CSS 变量 (供 fixed 浮层 settings-panel/modal/cmdk 用,因为它们在 .app 之外,不受 .app zoom 影响)
+  root.style.setProperty("--base-font", `${(14 * s).toFixed(2)}px`);
+  root.style.setProperty("--chat-msg-font", `${(15.5 * s).toFixed(2)}px`);
+  root.style.setProperty("--chat-line", `${(1.85 * s).toFixed(2)}px`);
+  root.style.setProperty("--fs-sm", `${(12 * s).toFixed(2)}px`);
+  root.style.setProperty("--fs-xs", `${(11 * s).toFixed(2)}px`);
+  root.style.setProperty("--fs-md", `${(13 * s).toFixed(2)}px`);
+  // 主页整体缩放:zoom 会等比缩放 .app 内所有元素 (按钮/字号/间距/图标/卡片)
+  // 配合反向算 width/height:zoom s 倍后视觉宽度=100/s * s = 100vw,正好占满视口,
+  // 不会溢出导致按钮被推出屏幕 / 卡片被裁
+  const app = document.querySelector(".app");
+  if (app) {
+    app.style.zoom = String(s);
+    app.style.width = `${(100 / s).toFixed(4)}vw`;
+    app.style.height = `${(100 / s).toFixed(4)}vh`;
+  }
+  localStorage.setItem("na-font-scale", String(s));
+  currentFontScale = s;
+  const lbl = $("#sp-fontscale-label");
+  if (lbl) lbl.textContent = `字号缩放 (当前 ${s.toFixed(2)}x)`;
+}
 const AGENT_LABELS = {
   orchestrator: "总编",
   "story-architect": "架构师",
@@ -101,7 +145,7 @@ function toast(msg, type = "ok", ms = 3000) {
 // ---------- 配置/模型 ----------
 async function loadConfig() {
   config = await api("/api/config");
-  $("#model-label").textContent = config.default.split("/").pop();
+  refreshModelChip();
   // 就绪提示
   if (!config.ready) {
     toast(`模型 ${config.default} 未配置 API Key,请设置环境变量或编辑 config.yaml`, "warn", 6000);
@@ -109,10 +153,74 @@ async function loadConfig() {
   refreshStatus();
 }
 
-// 顶栏模型按钮:直接打开设置面板让用户去配置/选择
-$("#model-btn").addEventListener("click", () => {
-  $("#settings-btn").click();
+// 顶栏模型按钮已删除 — 模型快速切换走 Composer 内的 model-chip
+// 顶栏齿轮按钮(id=settings-btn)只负责打开完整设置面板(密钥/参数/添加模型)
+
+// 刷新 Composer 中的模型 chip 标签
+function refreshModelChip() {
+  const el = $("#model-chip-label");
+  if (!el || !config) return;
+  const m = config.default || "";
+  // 显示模型名去掉 provider 前缀,太长截断
+  let label = m.split("/").pop();
+  if (label.length > 18) label = label.slice(0, 17) + "…";
+  el.textContent = label;
+  el.parentElement.parentElement.classList.toggle("warn", !config.ready);
+}
+
+// Composer 模型 chip 下拉:列出已配置模型 + 管理入口
+$("#model-chip").addEventListener("click", async (e) => {
+  e.stopPropagation();
+  const wrap = $("#model-switch");
+  const open = wrap.classList.toggle("open");
+  if (!open) return;
+  // 拉一次最新 settings(可能用户在 settings-panel 加过模型)
+  let s;
+  try { s = await api("/api/settings"); } catch { s = null; }
+  const menu = $("#model-menu");
+  const models = s?.models || (config ? [{ model: config.default, ready: config.ready, is_default: true }] : []);
+  const cur = config?.default;
+  menu.innerHTML = models.map((m) => {
+    const isCur = m.model === cur;
+    const shortName = m.model.split("/").pop();
+    const provider = m.model.split("/")[0] || "";
+    return `<button class="mm-item ${isCur ? "active" : ""}" data-model="${esc(m.model)}">
+      <span class="mm-name">${esc(shortName)}</span>
+      <span class="mm-prov">${esc(provider)}</span>
+      <span class="mm-badge ${m.ready ? "ok" : "warn"}">${m.ready ? "✓" : "!"}</span>
+      ${isCur ? '<span class="mm-check">●</span>' : ""}
+    </button>`;
+  }).join("") + `<button class="mm-manage" data-act="manage">⚙ 管理全部模型…</button>`;
+  // 绑定点击
+  $$("#model-menu .mm-item").forEach((b) => {
+    b.onclick = async (ev) => {
+      ev.stopPropagation();
+      const m = b.dataset.model;
+      if (m === cur) { wrap.classList.remove("open"); return; }
+      try {
+        await api("/api/config/model", { method: "PUT", body: JSON.stringify({ model: m }) });
+        config.default = m;
+        // 同步 ready 状态(从 settings 拿)
+        if (s) {
+          const found = s.models.find((x) => x.model === m);
+          if (found) config.ready = found.ready;
+        }
+        refreshModelChip();
+        refreshStatus();
+        toast(`已切换到 ${m.split("/").pop()}`, "ok");
+      } catch (e) {
+        toast("切换失败: " + e.message, "err");
+      }
+      wrap.classList.remove("open");
+    };
+  });
+  $("#model-menu .mm-manage").onclick = (ev) => {
+    ev.stopPropagation();
+    wrap.classList.remove("open");
+    $("#settings-btn").click();
+  };
 });
+document.addEventListener("click", () => $("#model-switch")?.classList.remove("open"));
 
 function refreshStatus() {
   const sb = $("#status-bar");
@@ -816,6 +924,8 @@ document.addEventListener("click", (e) => {
 });
 
 // init
+applyTheme(currentTheme);
+applyFontScale(currentFontScale);
 loadConfig();
 loadProjects();
 loadAgents();
@@ -852,16 +962,9 @@ async function loadAgents() {
   }
 }
 
-// OpenClaw 模式:更新活跃 agent 芯片(自动跟踪 delegate,用户不手选)
+// OpenClaw 模式:更新活跃 agent 状态(前端不显示,纯内部状态,orchestrator 自动委派时用)
 function updateActiveAgent(name) {
   activeAgent = name;
-  const a = agentsList.find((x) => x.name === name) || { icon: "🎯", label: name, name };
-  const chipIcon = $("#agent-chip-icon");
-  const chipLabel = $("#agent-chip-label");
-  if (chipIcon) chipIcon.textContent = a.icon || "🎯";
-  if (chipLabel) chipLabel.textContent = a.label || name;
-  const chip = $("#agent-chip");
-  if (chip) chip.dataset.agent = name;
 }
 
 // 打开 Agent Panel(展示当前活跃 agent 的 memory/tools/指令栈,只读)
@@ -937,11 +1040,8 @@ function renderWorkflowPhases() {
   }).join("");
 }
 
-// Agent 芯片点击 → 打开 Agent Panel (OpenClaw 模式,只读详情)
-$("#agent-chip").addEventListener("click", (e) => {
-  e.stopPropagation();
-  openAgentPanel();
-});
+// Agent toggle 已从前端移除 — 用户不直接选 agent,orchestrator 自动委派
+// openAgentPanel/openAgentPanel 函数保留(命令面板 ⌘K 仍可调出 Agent 详情查看)
 $("#ap-close").addEventListener("click", () => $("#agent-panel").classList.remove("open"));
 
 // ==================== 命令面板 (⌘K / Ctrl+K) ====================
@@ -1084,6 +1184,28 @@ function renderSettings() {
   const d = spData;
   const parts = [];
 
+  // ---- 外观 (主题 + 字号) ----
+  parts.push(`<div class="sp-sec"><div class="sp-sec-title">外观</div>`);
+  parts.push(`<div class="sp-field"><span class="lbl">主题配色</span>
+    <div class="theme-grid">`);
+  for (const [key, t] of Object.entries(THEMES)) {
+    const active = key === currentTheme ? "active" : "";
+    const sw = t.vars["--paper"];
+    const sw2 = t.vars["--accent"];
+    parts.push(`<button class="theme-swatch ${active}" data-theme="${key}" title="${t.label}">
+      <span class="sw-color" style="background:${sw};border-color:${sw2}"></span>
+      <span class="sw-label">${t.label}</span>
+    </button>`);
+  }
+  parts.push(`</div></div>`);
+  parts.push(`<div class="sp-field"><span class="lbl" id="sp-fontscale-label">字号缩放 (当前 ${currentFontScale.toFixed(2)}x)</span>
+    <div class="font-scale-row">
+      <input type="range" id="sp-fontscale" min="0.8" max="1.6" step="0.05" value="${currentFontScale}" />
+      <span class="font-scale-hint">0.8x 小 / 1.0x 默认 / 1.6x 大 (拖动实时预览)</span>
+    </div>
+  </div>`);
+  parts.push(`</div>`);
+
   // ---- 当前模型 ----
   parts.push(`<div class="sp-sec"><div class="sp-sec-title">当前模型</div>`);
   parts.push(`<div class="sp-row"><label>${esc(d.default)}</label>
@@ -1185,6 +1307,18 @@ function renderSettings() {
 }
 
 function bindSettings() {
+  // 主题切换
+  $$("#sp-body .theme-swatch").forEach((b) => {
+    b.onclick = () => {
+      applyTheme(b.dataset.theme);
+      renderSettings();
+    };
+  });
+  // 字号滑块 (拖动实时预览,不重新渲染面板)
+  const fs = $("#sp-fontscale");
+  if (fs) {
+    fs.oninput = (e) => applyFontScale(parseFloat(e.target.value));
+  }
   // 选中厂商
   $$("#sp-body .pp-btn").forEach((b) => {
     b.onclick = () => {
