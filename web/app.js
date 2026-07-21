@@ -79,16 +79,59 @@ const AGENT_ICONS = {
 
 // ---------- 工具 ----------
 async function api(path, opts = {}) {
-  const res = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
-    ...opts,
-  });
-  return res.json();
+  let res;
+  try {
+    res = await fetch(path, {
+      headers: { "Content-Type": "application/json" },
+      ...opts,
+    });
+  } catch (e) {
+    toast(`网络请求失败: ${e.message}`, "warn");
+    throw e;
+  }
+  const ct = res.headers.get("content-type") || "";
+  if (!ct.includes("application/json")) {
+    // 后端返回了非 JSON (通常是 HTML 错误页或纯文本),不要让浏览器跳转
+    const text = await res.text();
+    toast(`接口异常 (HTTP ${res.status}): ${text.slice(0, 120)}`, "warn");
+    throw new Error(`接口 ${path} 返回非 JSON: HTTP ${res.status}`);
+  }
+  const data = await res.json();
+  if (!res.ok) {
+    // 422/500 等: 显示后端错误信息
+    const msg = data.detail || data.error || JSON.stringify(data).slice(0, 200);
+    toast(`请求失败 (${res.status}): ${msg}`, "warn");
+    throw new Error(`接口 ${path} HTTP ${res.status}: ${msg}`);
+  }
+  return data;
 }
 
 function esc(s) {
   return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 }
+
+// ---------- 全局 button 类型修正 ----------
+// 动态生成的 <button> 默认 type="submit",在某些浏览器/情况下会触发默认提交行为,
+// 导致页面跳转到 /api/... 显示 {"ok":true} 这种 JSON ("乱码代码")。
+// 用 MutationObserver 监听所有新增 button,强制改为 type="button"。
+(function fixButtonType() {
+  const fix = (root) => {
+    root.querySelectorAll("button:not([type])").forEach((b) => b.setAttribute("type", "button"));
+    root.querySelectorAll('button[type="submit"]').forEach((b) => b.setAttribute("type", "button"));
+  };
+  fix(document);
+  const obs = new MutationObserver((muts) => {
+    for (const m of muts) {
+      for (const n of m.addedNodes) {
+        if (n.nodeType === 1) {
+          if (n.tagName === "BUTTON") n.setAttribute("type", "button");
+          else if (n.querySelectorAll) fix(n);
+        }
+      }
+    }
+  });
+  obs.observe(document.documentElement, { childList: true, subtree: true });
+})();
 
 // 极简 markdown 渲染 (无需外部依赖)
 function renderMd(src) {

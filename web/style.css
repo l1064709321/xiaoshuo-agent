@@ -390,8 +390,8 @@ body{font-family:var(--sans);background:var(--paper);color:var(--ink);font-size:
 .mc-badge.ok{background:rgba(90,107,63,.15);color:var(--green)}
 .mc-badge.warn{background:rgba(154,107,31,.15);color:var(--yellow)}
 .mc-badge.def{background:var(--accent);color:#f4ecd8}
-.mc-del{background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:0 2px}
-.mc-del:hover{color:var(--red)}
+.mc-del{background:transparent;border:1px solid var(--border);color:var(--muted);cursor:pointer;font-size:14px;padding:2px 8px;border-radius:6px;font-weight:600}
+.mc-del:hover{color:#fff;background:var(--red);border-color:var(--red)}
 .mc-fields{display:grid;gap:6px}
 .mc-fields .sp-field{margin:0}
 .add-model{background:var(--paper);border:1px dashed var(--border);border-radius:8px;padding:12px}

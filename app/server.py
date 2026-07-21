@@ -440,6 +440,160 @@ def index():
     return "<h1>Novel Agent</h1><p>web/ 目录未找到</p>"
 
 
+# ---------- 卡片启动器 (http://localhost:8000/launcher) ----------
+LAUNCHER_HTML = """<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Novel Agent · 启动卡片</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: linear-gradient(135deg, #f6efd9 0%, #efe4c5 100%);
+    min-height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+    padding: 20px;
+  }
+  .card {
+    background: #fff;
+    border-radius: 20px;
+    padding: 48px 44px;
+    box-shadow: 0 24px 60px rgba(46,31,21,.16), 0 2px 8px rgba(46,31,21,.06);
+    text-align: center;
+    max-width: 440px;
+    width: 100%;
+    border: 1px solid #e6d6ac;
+  }
+  .logo { font-size: 64px; line-height: 1; margin-bottom: 18px; color: #a13d3d; font-weight: 700; }
+  .title { font-size: 28px; color: #2e1f15; margin-bottom: 6px; font-weight: 700; letter-spacing: .5px; }
+  .subtitle { color: #9a8062; margin-bottom: 28px; font-size: 13px; }
+  .status {
+    display: inline-block;
+    padding: 6px 14px;
+    border-radius: 16px;
+    background: #fde8e8;
+    color: #8b2222;
+    margin-bottom: 24px;
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .status.running { background: #e6f4e6; color: #2d6a2d; }
+  .status.checking { background: #fef3d6; color: #9a6b1f; }
+  .btn {
+    display: block;
+    width: 100%;
+    padding: 14px 24px;
+    border: none;
+    border-radius: 12px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all .2s;
+    font-family: inherit;
+    text-decoration: none;
+  }
+  .btn-primary { background: #a13d3d; color: #fff; }
+  .btn-primary:hover:not(:disabled) { background: #8b2e2e; transform: translateY(-1px); box-shadow: 0 6px 16px rgba(161,61,61,.3); }
+  .btn-secondary { background: #5a6b3f; color: #fff; margin-top: 10px; }
+  .btn-secondary:hover { background: #4a5b2f; transform: translateY(-1px); }
+  .btn:disabled { opacity: .6; cursor: not-allowed; transform: none; }
+  .hint { margin-top: 18px; font-size: 12px; color: #9a8062; min-height: 16px; }
+  .spinner {
+    display: inline-block; width: 12px; height: 12px;
+    border: 2px solid #fff; border-top-color: transparent;
+    border-radius: 50%; animation: spin .8s linear infinite;
+    vertical-align: middle; margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (max-width: 480px) { .card { padding: 36px 28px; } .logo { font-size: 56px; } .title { font-size: 24px; } }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">✦</div>
+  <div class="title">Novel Agent</div>
+  <div class="subtitle">小说创作 8 阶段工作流 · 技能市场</div>
+  <div class="status checking" id="status">● 检查中...</div>
+  <button class="btn btn-primary" id="enterBtn" onclick="enter()" style="display:none">直接进入应用</button>
+  <button class="btn btn-secondary" id="restartBtn" onclick="restart()" style="display:none">重启服务</button>
+  <div class="hint" id="hint"></div>
+</div>
+<script>
+async function checkStatus() {
+  const s = document.getElementById('status');
+  const enterBtn = document.getElementById('enterBtn');
+  const restartBtn = document.getElementById('restartBtn');
+  s.className = 'status checking';
+  s.textContent = '● 检查中...';
+  try {
+    const r = await fetch('/api/health');
+    if (r.ok) {
+      s.className = 'status running';
+      s.textContent = '● 服务运行中';
+      enterBtn.style.display = 'block';
+      restartBtn.style.display = 'block';
+    } else {
+      s.className = 'status';
+      s.textContent = '○ 服务异常';
+      restartBtn.style.display = 'block';
+    }
+  } catch (e) {
+    s.className = 'status';
+    s.textContent = '○ 服务未启动';
+    restartBtn.style.display = 'block';
+  }
+}
+function enter() { window.location.href = '/'; }
+async function restart() {
+  const btn = document.getElementById('restartBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>重启中...';
+  document.getElementById('hint').textContent = '约需 3-5 秒,请稍候';
+  try {
+    await fetch('/api/launcher/restart', {method:'POST'});
+    await new Promise(r => setTimeout(r, 4000));
+    await checkStatus();
+    btn.disabled = false;
+    btn.innerHTML = '重启服务';
+    document.getElementById('hint').textContent = '已重启,可点上方按钮进入';
+  } catch (e) {
+    btn.disabled = false;
+    btn.innerHTML = '重启服务';
+    document.getElementById('hint').textContent = '错误: ' + e.message;
+  }
+}
+checkStatus();
+</script>
+</body>
+</html>"""
+
+
+@app.get("/launcher", response_class=HTMLResponse)
+def launcher_card():
+    """卡片启动器页面。"""
+    return LAUNCHER_HTML
+
+
+@app.post("/api/launcher/restart")
+def launcher_restart():
+    """通过卡片触发服务重启 (拉起一个新的 uvicorn 子进程)。"""
+    import subprocess
+    import os
+    # 脱离当前进程树,重启 na
+    na_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "na")
+    if os.path.exists(na_path):
+        subprocess.Popen(
+            [na_path, "restart"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        return {"ok": True, "message": "重启指令已发送"}
+    return {"ok": False, "error": "na 脚本未找到"}
+
+
 def main() -> None:
     import uvicorn
 

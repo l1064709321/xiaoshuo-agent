@@ -20,11 +20,49 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
+import sys
+import time
 from typing import AsyncIterator
 
 from . import agents, store, tools
 from .config import get_settings
 from .llm import chat
+
+
+# ---------- 实时日志 ----------
+# 配置: 同时输出到 stderr (uvicorn 控制台) 和 /tmp/novel-agent-agent.log
+_AGENT_LOG = os.environ.get("NA_AGENT_LOG", "/tmp/novel-agent-agent.log")
+logger = logging.getLogger("novel_agent")
+logger.setLevel(logging.DEBUG)
+if not logger.handlers:
+    _fmt = logging.Formatter(
+        "%(asctime)s [%(levelname).1s] %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    # stderr handler (跟随 uvicorn 控制台)
+    _sh = logging.StreamHandler(sys.stderr)
+    _sh.setFormatter(_fmt)
+    _sh.setLevel(logging.INFO)
+    logger.addHandler(_sh)
+    # 文件 handler (完整 DEBUG 日志, 含 LLM 请求/响应细节)
+    try:
+        _fh = logging.FileHandler(_AGENT_LOG, encoding="utf-8")
+        _fh.setFormatter(_fmt)
+        _fh.setLevel(logging.DEBUG)
+        logger.addHandler(_fh)
+    except OSError:
+        pass
+
+
+def _trunc(s: str, n: int = 200) -> str:
+    """截断字符串用于日志输出,避免一行太长。"""
+    if not s:
+        return ""
+    s = str(s)
+    s = s.replace("\n", "\\n")
+    return s[:n] + ("…" if len(s) > n else "")
 
 
 # 写入类工具白名单: 只读 agent 不允许调用这些
@@ -137,14 +175,22 @@ async def _exec_tool(
         task = (fargs.get("task") or fargs.get("prompt") or
                 fargs.get("instruction") or fargs.get("description") or "")
         if not agents.is_valid(target) or target == agents.DEFAULT_AGENT:
+            logger.warning(f"[{agent_name}] 委派失败: 无效 target={target!r}")
             return json.dumps({"error": f"无法委派给 {target!r}。请用参数 agent (枚举值之一) 与 task。"}, ensure_ascii=False)
         if depth >= agents.MAX_DELEGATE_DEPTH:
+            logger.warning(f"[{agent_name}] 委派失败: 已达最大深度 {depth}")
             return json.dumps({"error": f"已达最大委派深度 {agents.MAX_DELEGATE_DEPTH}"}, ensure_ascii=False)
+        logger.info(f"[{agent_name}] → 委派 → [{target}] depth={depth+1} task={_trunc(task, 120)}")
         await emit({"type": "delegate", "from": agent_name, "to": target, "task": task, "depth": depth + 1})
+        t0 = time.time()
         result = await _run_sub_agent(pid, target, task, depth=depth + 1, emit=emit)
+        logger.info(f"[{target}] ← 委派完成 耗时={time.time()-t0:.1f}s 结果={_trunc(result, 200)}")
         return json.dumps({"agent": target, "task": task, "result": result}, ensure_ascii=False)
     # 普通工具直接走 dispatch
-    return await tools.dispatch(pid, fname, fargs)
+    t0 = time.time()
+    result = await tools.dispatch(pid, fname, fargs)
+    logger.info(f"[{agent_name}] 工具 {fname} 耗时={time.time()-t0:.2f}s 结果={_trunc(result, 200)}")
+    return result
 
 
 async def _run_sub_agent(
@@ -176,6 +222,7 @@ async def _run_sub_agent(
     # (取作家原文 few-shot) → query_project (拿 chapter_id) → continue_writing (写正文) 完整跑完。
     # 太紧 (如 4 步) 会导致子 agent 在取 few-shot 阶段就把步数用光,没机会写正文。
     sub_max_steps = max(8, s.max_steps)
+    logger.info(f"[{agent_name}] 子 agent 启动 max_steps={sub_max_steps} task={_trunc(task, 200)}")
     for step in range(sub_max_steps):
         try:
             # 默认用非 reasoning 模型 (如 agnes-1.5-flash),4096 够用。
@@ -183,6 +230,7 @@ async def _run_sub_agent(
             # 但 reasoning 模型做 agent loop 工具调用决策不可靠,不推荐。
             resp = await chat(messages, s.default_model, tools=tool_schema)
         except Exception as e:
+            logger.error(f"[{agent_name}] step={step} LLM 调用失败: {e}")
             return f"(子 agent {agent_name} 调用失败: {e})"
 
         tool_calls = resp["tool_calls"]
@@ -190,6 +238,7 @@ async def _run_sub_agent(
 
         if not tool_calls:
             # 终态:返回最终文本
+            logger.info(f"[{agent_name}] step={step} 完成 回答长度={len(content or '')}")
             await emit({"type": "step", "agent": agent_name, "tool": "(完成)",
                         "args": {}, "thinking": content, "depth": depth})
             return content or ""
@@ -210,14 +259,18 @@ async def _run_sub_agent(
                 fargs = json.loads(tc.function.arguments or "{}")
             except Exception:
                 fargs = {}
+            logger.info(f"[{agent_name}] step={step} → 调工具 {fname} args={_trunc(json.dumps(fargs, ensure_ascii=False), 150)}")
             await emit({"type": "step", "agent": agent_name, "tool": fname,
                         "args": fargs, "thinking": content, "depth": depth})
+            t0 = time.time()
             result = await _exec_tool(pid, fname, fargs, depth=depth, emit=emit, agent_name=agent_name)
+            logger.info(f"[{agent_name}] step={step} ← 工具 {fname} 耗时={time.time()-t0:.2f}s 结果={_trunc(result, 200)}")
             messages.append({"role": "tool", "tool_call_id": tc.id,
                              "name": fname, "content": result})
             await emit({"type": "observation", "agent": agent_name, "tool": fname,
                         "result": result, "depth": depth})
 
+    logger.warning(f"[{agent_name}] 达到最大步数 {sub_max_steps},任务未完成")
     return f"(子 agent {agent_name} 达到最大步数 {sub_max_steps},任务未完全完成)"
 
 
@@ -229,9 +282,12 @@ async def run(
     agent_name: 入口 agent,默认 orchestrator 总编。
     """
     s = get_settings()
+    logger.info(f"========== 主 agent 启动 pid={pid} agent={agent_name} max_steps={s.max_steps} ==========")
+    logger.info(f"[{agent_name}] 用户输入: {_trunc(user_input, 200)}")
     store.add_message(pid, "user", user_input)
     messages = _build_messages(pid, agent_name)
     tool_schema = tools.schema_for(agents.get_tools(agent_name))
+    logger.info(f"[{agent_name}] 装载消息 {len(messages)} 条, 工具 {len(agents.get_tools(agent_name))} 个: {agents.get_tools(agent_name)}")
 
     # 事件缓冲:子 agent 委派过程中产生的事件也要吐给前端
     event_queue: list[str] = []
@@ -250,6 +306,7 @@ async def run(
             # 同上: 默认非 reasoning 模型,4096 够用
             resp = await chat(messages, s.default_model, tools=tool_schema)
         except Exception as e:
+            logger.error(f"[{agent_name}] step={step} LLM 调用失败: {e}")
             yield _event({"type": "error", "message": str(e)})
             return
 
@@ -257,6 +314,7 @@ async def run(
         content = resp["content"]
 
         if not tool_calls:
+            logger.info(f"[{agent_name}] step={step} 完成 回答长度={len(content or '')}")
             store.add_message(pid, "assistant", content)
             yield _event({"type": "answer_start", "agent": agent_name})
             chunk_size = 12
@@ -267,6 +325,7 @@ async def run(
                 "type": "done", "agent": agent_name,
                 "steps": step + 1, "stats": store.stats(pid),
             })
+            logger.info(f"========== 主 agent 完成 steps={step+1} ==========")
             return
 
         messages.append({
@@ -294,11 +353,14 @@ async def run(
                 fargs = json.loads(tc.function.arguments or "{}")
             except Exception:
                 fargs = {}
+            logger.info(f"[{agent_name}] step={step} → 调工具 {fname} args={_trunc(json.dumps(fargs, ensure_ascii=False), 150)}")
             yield _event({
                 "type": "step", "agent": agent_name, "tool": fname,
                 "args": fargs, "thinking": content,
             })
+            t0 = time.time()
             result = await _exec_tool(pid, fname, fargs, depth=0, emit=emit, agent_name=agent_name)
+            logger.info(f"[{agent_name}] step={step} ← 工具 {fname} 耗时={time.time()-t0:.2f}s 结果={_trunc(result, 200)}")
             # 若该工具触发过子 agent,事件已累积在队列里,这里先吐队列
             while event_queue:
                 yield event_queue.pop(0)
@@ -312,6 +374,7 @@ async def run(
                 "tool": fname, "result": result,
             })
 
+    logger.warning(f"[{agent_name}] 达到最大步数 {s.max_steps}")
     store.add_message(pid, "assistant", "(已达最大步骤数,请继续指示。)")
     yield _event({
         "type": "done", "agent": agent_name,

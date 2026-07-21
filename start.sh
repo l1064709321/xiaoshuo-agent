@@ -1,30 +1,17 @@
 #!/usr/bin/env bash
-# Novel Agent 一键启动脚本:自动装依赖 + 后台启动服务
-# 用法: bash start.sh
+# Novel Agent 一键启动 — 桌面对话框
+# 双击或 ./start.sh 运行
+# 弹出原生对话框 → 点「启动并进入」→ 拉起主服务 → 自动打开浏览器
 set -e
-cd "$(dirname "$0")"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$DIR"
 
-echo "==> 检查依赖..."
-python -m pip install -q -r requirements.txt 2>&1 | tail -2 || true
-
-echo "==> 停止旧进程..."
-pkill -f "run.py" 2>/dev/null || true
-sleep 1
-
-echo "==> 启动服务..."
-nohup python run.py > /tmp/novel-agent.log 2>&1 &
-echo $! > /tmp/novel-agent.pid
-
-echo "==> 等待就绪..."
-for i in $(seq 1 15); do
-  code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/ 2>/dev/null || echo 000)
-  if [ "$code" = "200" ]; then
-    echo "✓ 服务已启动: http://localhost:8000/  (PID $(cat /tmp/novel-agent.pid))"
-    exit 0
-  fi
-  sleep 1
-done
-
-echo "✗ 启动失败,日志:"
-cat /tmp/novel-agent.log
-exit 1
+# 优先用 tkinter 桌面对话框 (原生窗口,不依赖浏览器)
+if python3 -c "import tkinter" 2>/dev/null; then
+    exec python3 launcher_tk.py
+else
+    # 系统无 tkinter → 回退到 web 卡片 (launcher.py)
+    echo "[警告] 系统未安装 tkinter,回退到 web 卡片模式"
+    echo "       Ubuntu/Debian 安装: sudo apt install python3-tk"
+    exec python3 launcher.py
+fi

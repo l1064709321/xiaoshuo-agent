@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="refresh" content="0; url=http://localhost:8000/">
+<title>Novel Agent 启动</title>
+<style>
+  body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #faf6ed;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    min-height: 100vh; margin: 0;
+    color: #2e1f15;
+  }
+  .card {
+    background: #fff;
+    border-radius: 20px;
+    padding: 48px 44px;
+    box-shadow: 0 24px 60px rgba(46,31,21,.16);
+    text-align: center;
+    max-width: 440px;
+    border: 1px solid #e6d6ac;
+  }
+  .logo { font-size: 64px; color: #a13d3d; margin-bottom: 18px; }
+  .title { font-size: 28px; font-weight: 700; margin-bottom: 6px; }
+  .subtitle { color: #9a8062; margin-bottom: 28px; font-size: 13px; }
+  .btn {
+    display: inline-block;
+    background: #a13d3d; color: #fff !important;
+    padding: 14px 32px; border-radius: 12px;
+    text-decoration: none; font-weight: 600; font-size: 16px;
+    transition: all .2s;
+  }
+  .btn:hover { background: #8b2e2e; transform: translateY(-1px); }
+  .hint { margin-top: 18px; font-size: 12px; color: #9a8062; }
+  .spinner {
+    display: inline-block; width: 14px; height: 14px;
+    border: 2px solid #a13d3d; border-top-color: transparent;
+    border-radius: 50%; animation: spin .8s linear infinite;
+    margin-top: 20px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">✦</div>
+  <div class="title">Novel Agent</div>
+  <div class="subtitle">小说创作 8 阶段工作流 · 技能市场</div>
+  <a class="btn" href="http://localhost:8000/">点击进入应用</a>
+  <div class="spinner"></div>
+  <div class="hint">3 秒后自动跳转,或点上方按钮直接进入</div>
+</div>
+<script>
+  setTimeout(() => { window.location.href = "http://localhost:8000/"; }, 3000);
+</script>
+</body>
+</html>
