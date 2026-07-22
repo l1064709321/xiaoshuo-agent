@@ -24,7 +24,7 @@ import logging
 import os
 import sys
 import time
-from typing import AsyncIterator
+from typing import AsyncIterator, Optional
 
 from . import agents, store, tools
 from .config import get_settings
@@ -150,13 +150,43 @@ def _build_messages(pid: str, agent_name: str = agents.DEFAULT_AGENT) -> list[di
     return _trim_for_window(msgs)  # 原理2: 滑动窗口防爆
 
 
-def _event(obj: dict) -> str:
-    return f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
+def _extract_usage(resp):
+    """从 litellm completion response 提取 token 使用 + 成本。
+    litellm 在 resp.usage 给 prompt_tokens/completion_tokens/total_cost (若 _fer.alogo_cost 启用)。
+    """
+    if resp is None:
+        return None, None
+    u = getattr(resp, "usage", None)
+    if u is None:
+        return None, None
+    tok = (getattr(u, "prompt_tokens", 0) or 0) + (getattr(u, "completion_tokens", 0) or 0)
+    # litellm 在响应上塞 _response_cost (USD),部分版本在 usage 上
+    cost = getattr(resp, "_response_cost", None) or getattr(u, "cost", None) or 0
+    try:
+        cost = float(cost)
+    except Exception:
+        cost = 0
+    return tok, cost
 
 
+def _truncate_for_trace(s, n: int = 800) -> str:
+    """trace 输入/输出截断 (避免 sqlite 行过大),返回纯字符串。"""
+    if s is None:
+        return ""
+    if not isinstance(s, str):
+        try:
+            s = json.dumps(s, ensure_ascii=False, default=str)
+        except Exception:
+            s = str(s)
+    s = s.replace("\n", "\\n")
+    return s[:n] + ("…" if len(s) > n else "")
+
+
+# ---------- 工具调用与 trace 落盘 ----------
 async def _exec_tool(
     pid: str, fname: str, fargs: dict, *,
     depth: int, emit, agent_name: str = agents.DEFAULT_AGENT,
+    run_id: Optional[str] = None,
 ) -> str:
     """执行工具;对 delegate_to_agent 走子 agent 运行循环。
 
@@ -167,6 +197,9 @@ async def _exec_tool(
     # 沙盒检查: 只读 agent 不允许调用写入类工具
     sandbox_err = _check_sandbox(agent_name, fname)
     if sandbox_err:
+        if run_id:
+            store.add_run_event(run_id, "tool_call", agent=agent_name, tool=fname,
+                                input_=fargs, error=sandbox_err, duration_ms=0)
         return json.dumps({"error": sandbox_err}, ensure_ascii=False)
     if fname == "delegate_to_agent":
         # 参数名容错: 模型常把 agent/task 幻觉成 agent_role/agent_name/target/prompt/instruction
@@ -176,26 +209,46 @@ async def _exec_tool(
                 fargs.get("instruction") or fargs.get("description") or "")
         if not agents.is_valid(target) or target == agents.DEFAULT_AGENT:
             logger.warning(f"[{agent_name}] 委派失败: 无效 target={target!r}")
+            if run_id:
+                store.add_run_event(run_id, "tool_call", agent=agent_name, tool=fname,
+                                    input_=fargs, error=f"无效 target={target!r}")
             return json.dumps({"error": f"无法委派给 {target!r}。请用参数 agent (枚举值之一) 与 task。"}, ensure_ascii=False)
         if depth >= agents.MAX_DELEGATE_DEPTH:
             logger.warning(f"[{agent_name}] 委派失败: 已达最大深度 {depth}")
+            if run_id:
+                store.add_run_event(run_id, "tool_call", agent=agent_name, tool=fname,
+                                    input_=fargs, error=f"已达最大委派深度 {agents.MAX_DELEGATE_DEPTH}")
             return json.dumps({"error": f"已达最大委派深度 {agents.MAX_DELEGATE_DEPTH}"}, ensure_ascii=False)
         logger.info(f"[{agent_name}] → 委派 → [{target}] depth={depth+1} task={_trunc(task, 120)}")
         await emit({"type": "delegate", "from": agent_name, "to": target, "task": task, "depth": depth + 1})
+        if run_id:
+            store.add_run_event(run_id, "delegate", agent=agent_name, tool=fname,
+                                input_={"target": target, "task": task})
         t0 = time.time()
-        result = await _run_sub_agent(pid, target, task, depth=depth + 1, emit=emit)
+        result = await _run_sub_agent(pid, target, task, depth=depth + 1, emit=emit, run_id=run_id)
+        dur_ms = int((time.time() - t0) * 1000)
         logger.info(f"[{target}] ← 委派完成 耗时={time.time()-t0:.1f}s 结果={_trunc(result, 200)}")
+        if run_id:
+            store.add_run_event(run_id, "delegate_done", agent=target,
+                                output=_truncate_for_trace(result, 800), duration_ms=dur_ms)
         return json.dumps({"agent": target, "task": task, "result": result}, ensure_ascii=False)
     # 普通工具直接走 dispatch
+    if run_id:
+        store.add_run_event(run_id, "tool_call", agent=agent_name, tool=fname,
+                            input_=_truncate_for_trace(fargs, 800))
     t0 = time.time()
     result = await tools.dispatch(pid, fname, fargs)
-    logger.info(f"[{agent_name}] 工具 {fname} 耗时={time.time()-t0:.2f}s 结果={_trunc(result, 200)}")
+    dur_ms = int((time.time() - t0) * 1000)
+    logger.info(f"[{agent_name}] 工具 {fname} 耗时={dur_ms}ms 结果={_trunc(result, 200)}")
+    if run_id:
+        store.add_run_event(run_id, "tool_result", agent=agent_name, tool=fname,
+                            output=_truncate_for_trace(result, 800), duration_ms=dur_ms)
     return result
 
 
 async def _run_sub_agent(
     pid: str, agent_name: str, task: str, *,
-    depth: int, emit,
+    depth: int, emit, run_id: Optional[str] = None,
 ) -> str:
     """运行子 agent 的 agentic loop,返回最终文本回答(不产出 token 流)。
 
@@ -224,6 +277,7 @@ async def _run_sub_agent(
     sub_max_steps = max(8, s.max_steps)
     logger.info(f"[{agent_name}] 子 agent 启动 max_steps={sub_max_steps} task={_trunc(task, 200)}")
     for step in range(sub_max_steps):
+        t0 = time.time()
         try:
             # 默认用非 reasoning 模型 (如 agnes-1.5-flash),4096 够用。
             # 若用 reasoning 模型 (agnes-2.0-flash) 需在 ModelConfig.max_tokens 调大,
@@ -231,10 +285,21 @@ async def _run_sub_agent(
             resp = await chat(messages, s.default_model, tools=tool_schema)
         except Exception as e:
             logger.error(f"[{agent_name}] step={step} LLM 调用失败: {e}")
+            if run_id:
+                store.add_run_event(run_id, "error", agent=agent_name,
+                                    error=f"step={step} {e}", duration_ms=int((time.time()-t0)*1000))
             return f"(子 agent {agent_name} 调用失败: {e})"
 
         tool_calls = resp["tool_calls"]
         content = resp["content"]
+        # 落盘 LLM 调用事件 (token + 成本,便于回放/统计)
+        if run_id:
+            tok, cost = _extract_usage(resp.get("raw"))
+            store.add_run_event(run_id, "llm_call", agent=agent_name,
+                                input_=_truncate_for_trace(task, 200),
+                                output=_truncate_for_trace(content, 400),
+                                tokens=tok, cost=cost,
+                                duration_ms=int((time.time()-t0)*1000))
 
         if not tool_calls:
             # 终态:返回最终文本
@@ -262,9 +327,9 @@ async def _run_sub_agent(
             logger.info(f"[{agent_name}] step={step} → 调工具 {fname} args={_trunc(json.dumps(fargs, ensure_ascii=False), 150)}")
             await emit({"type": "step", "agent": agent_name, "tool": fname,
                         "args": fargs, "thinking": content, "depth": depth})
-            t0 = time.time()
-            result = await _exec_tool(pid, fname, fargs, depth=depth, emit=emit, agent_name=agent_name)
-            logger.info(f"[{agent_name}] step={step} ← 工具 {fname} 耗时={time.time()-t0:.2f}s 结果={_trunc(result, 200)}")
+            result = await _exec_tool(pid, fname, fargs, depth=depth, emit=emit,
+                                      agent_name=agent_name, run_id=run_id)
+            logger.info(f"[{agent_name}] step={step} ← 工具 {fname} 结果={_trunc(result, 200)}")
             messages.append({"role": "tool", "tool_call_id": tc.id,
                              "name": fname, "content": result})
             await emit({"type": "observation", "agent": agent_name, "tool": fname,
@@ -282,7 +347,10 @@ async def run(
     agent_name: 入口 agent,默认 orchestrator 总编。
     """
     s = get_settings()
-    logger.info(f"========== 主 agent 启动 pid={pid} agent={agent_name} max_steps={s.max_steps} ==========")
+    # 新建一次 run 记录,用于 trace 回放/统计
+    run_id = store.create_run(pid, user_input, agent_name)
+    store.add_run_event(run_id, "start", agent=agent_name, input_=user_input)
+    logger.info(f"========== 主 agent 启动 pid={pid} agent={agent_name} max_steps={s.max_steps} run_id={run_id} ==========")
     logger.info(f"[{agent_name}] 用户输入: {_trunc(user_input, 200)}")
     store.add_message(pid, "user", user_input)
     messages = _build_messages(pid, agent_name)
@@ -295,37 +363,53 @@ async def run(
     async def emit(obj: dict):
         event_queue.append(_event(obj))
 
-    yield _event({"type": "start", "agent": agent_name, "input": user_input})
+    yield _event({"type": "start", "agent": agent_name, "input": user_input, "run_id": run_id})
 
     for step in range(s.max_steps):
         # 先把子 agent 委派过程中累积的事件吐出去
         while event_queue:
             yield event_queue.pop(0)
 
+        t0 = time.time()
         try:
             # 同上: 默认非 reasoning 模型,4096 够用
             resp = await chat(messages, s.default_model, tools=tool_schema)
         except Exception as e:
             logger.error(f"[{agent_name}] step={step} LLM 调用失败: {e}")
-            yield _event({"type": "error", "message": str(e)})
+            store.add_run_event(run_id, "error", agent=agent_name,
+                                error=f"step={step} {e}", duration_ms=int((time.time()-t0)*1000))
+            store.finish_run(run_id, status="error", error=str(e))
+            yield _event({"type": "error", "message": str(e), "run_id": run_id})
             return
 
         tool_calls = resp["tool_calls"]
         content = resp["content"]
+        # 落盘 LLM 调用事件 (token + 成本)
+        tok, cost = _extract_usage(resp.get("raw"))
+        store.add_run_event(run_id, "llm_call", agent=agent_name,
+                            input_=_truncate_for_trace(user_input, 200),
+                            output=_truncate_for_trace(content, 400),
+                            tokens=tok, cost=cost,
+                            duration_ms=int((time.time()-t0)*1000))
 
         if not tool_calls:
             logger.info(f"[{agent_name}] step={step} 完成 回答长度={len(content or '')}")
             store.add_message(pid, "assistant", content)
+            store.add_run_event(run_id, "end", agent=agent_name,
+                                output=_truncate_for_trace(content, 800),
+                                duration_ms=int((time.time()-t0)*1000))
             yield _event({"type": "answer_start", "agent": agent_name})
             chunk_size = 12
             for i in range(0, len(content), chunk_size):
                 yield _event({"type": "token", "text": content[i: i + chunk_size]})
             yield _event({"type": "answer_end"})
+            stats = store.stats(pid)
+            store.finish_run(run_id, status="done")
             yield _event({
                 "type": "done", "agent": agent_name,
-                "steps": step + 1, "stats": store.stats(pid),
+                "steps": step + 1, "stats": stats, "run_id": run_id,
             })
-            logger.info(f"========== 主 agent 完成 steps={step+1} ==========")
+            logger.info(f"========== 主 agent 完成 steps={step+1} run_id={run_id} ==========")
             return
 
         messages.append({
@@ -358,9 +442,9 @@ async def run(
                 "type": "step", "agent": agent_name, "tool": fname,
                 "args": fargs, "thinking": content,
             })
-            t0 = time.time()
-            result = await _exec_tool(pid, fname, fargs, depth=0, emit=emit, agent_name=agent_name)
-            logger.info(f"[{agent_name}] step={step} ← 工具 {fname} 耗时={time.time()-t0:.2f}s 结果={_trunc(result, 200)}")
+            result = await _exec_tool(pid, fname, fargs, depth=0, emit=emit,
+                                       agent_name=agent_name, run_id=run_id)
+            logger.info(f"[{agent_name}] step={step} ← 工具 {fname} 结果={_trunc(result, 200)}")
             # 若该工具触发过子 agent,事件已累积在队列里,这里先吐队列
             while event_queue:
                 yield event_queue.pop(0)
@@ -376,8 +460,11 @@ async def run(
 
     logger.warning(f"[{agent_name}] 达到最大步数 {s.max_steps}")
     store.add_message(pid, "assistant", "(已达最大步骤数,请继续指示。)")
+    store.add_run_event(run_id, "end", agent=agent_name,
+                        output="达到最大步骤", duration_ms=0)
+    store.finish_run(run_id, status="done")
     yield _event({
         "type": "done", "agent": agent_name,
         "steps": s.max_steps, "stats": store.stats(pid),
-        "note": "达到最大步骤",
+        "note": "达到最大步骤", "run_id": run_id,
     })

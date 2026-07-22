@@ -1712,3 +1712,168 @@ function bindSettings() {
     };
   }
 }
+
+// ==================== 运行历史面板 (trace 回放) ====================
+const runsPanel = $("#runs-panel");
+const scrimEl = $("#scrim");
+
+function _fmtTime(ts) {
+  if (!ts) return "—";
+  const d = new Date(ts * 1000);
+  return d.toLocaleString("zh-CN", { hour12: false, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+function _fmtDuration(sec) {
+  if (!sec || sec < 0) return "—";
+  if (sec < 60) return `${sec.toFixed(1)}s`;
+  return `${Math.floor(sec / 60)}m${Math.floor(sec % 60)}s`;
+}
+function _fmtTokens(n) {
+  if (!n) return "0";
+  if (n < 1000) return String(n);
+  return `${(n / 1000).toFixed(1)}k`;
+}
+function _fmtCost(c) {
+  if (!c) return "$0";
+  if (c < 0.01) return `$${c.toFixed(4)}`;
+  return `$${c.toFixed(2)}`;
+}
+// SSE 事件类型 → 中文标签 + 颜色
+const EVENT_META = {
+  start:         { label: "开始",     color: "var(--blue)" },
+  llm_call:      { label: "LLM 调用", color: "var(--accent)" },
+  tool_call:     { label: "调工具",   color: "var(--yellow)" },
+  tool_result:   { label: "工具结果", color: "var(--green)" },
+  delegate:      { label: "委派",     color: "var(--accent)" },
+  delegate_done: { label: "委派完成", color: "var(--green)" },
+  error:         { label: "错误",     color: "var(--red)" },
+  end:           { label: "结束",     color: "var(--muted)" },
+};
+
+async function openRunsPanel() {
+  if (!currentProject) return toast("请先选择项目", "warn");
+  runsPanel.classList.add("open");
+  scrimEl?.classList.add("show");
+  $("#rp-detail").classList.add("hidden");
+  $("#rp-runs").classList.remove("hidden");
+  $("#rp-metrics").textContent = "加载中…";
+  $("#rp-runs").innerHTML = '<div class="rp-loading">加载中…</div>';
+  try {
+    const [metrics, runs] = await Promise.all([
+      api(`/api/projects/${currentProject.id}/metrics`),
+      api(`/api/projects/${currentProject.id}/runs`),
+    ]);
+    renderProjectMetrics(metrics);
+    renderRunsList(runs);
+  } catch (e) { /* api 已 toast */ }
+}
+
+function renderProjectMetrics(m) {
+  const html = `
+    <div class="rp-metric"><div class="rp-metric-num">${m.total_runs}</div><div class="rp-metric-lbl">总运行</div></div>
+    <div class="rp-metric"><div class="rp-metric-num">${_fmtTokens(m.total_tokens)}</div><div class="rp-metric-lbl">tokens</div></div>
+    <div class="rp-metric"><div class="rp-metric-num">${_fmtCost(m.total_cost_usd)}</div><div class="rp-metric-lbl">成本</div></div>
+    <div class="rp-metric"><div class="rp-metric-num">${_fmtDuration(m.avg_run_duration_sec)}</div><div class="rp-metric-lbl">平均耗时</div></div>
+    <div class="rp-metric"><div class="rp-metric-num">${m.total_tool_calls}</div><div class="rp-metric-lbl">工具调用</div></div>
+  `;
+  $("#rp-metrics").innerHTML = html;
+}
+
+function renderRunsList(runs) {
+  if (!runs.length) {
+    $("#rp-runs").innerHTML = '<div class="rp-empty"><div class="rp-empty-icon">📭</div><p>暂无运行记录</p><p class="muted">每次发消息触发 agent loop 都会自动记录</p></div>';
+    return;
+  }
+  const html = runs.map((r) => {
+    const statusCls = r.status === "done" ? "ok" : (r.status === "error" ? "err" : "running");
+    const statusIcon = r.status === "done" ? "✓" : (r.status === "error" ? "✗" : "…");
+    return `<button class="rp-item" data-rid="${r.id}">
+      <div class="rp-item-main">
+        <span class="rp-item-status ${statusCls}">${statusIcon}</span>
+        <span class="rp-item-input">${esc((r.user_input || "").slice(0, 60))}${(r.user_input||"").length > 60 ? "…" : ""}</span>
+      </div>
+      <div class="rp-item-meta">
+        <span>${_fmtTime(r.started_at)}</span>
+        <span>${r.total_steps} 步</span>
+        <span>${_fmtTokens(r.total_tokens)} tok</span>
+        <span>${_fmtCost(r.total_cost)}</span>
+      </div>
+    </button>`;
+  }).join("");
+  $("#rp-runs").innerHTML = html;
+  $$("#rp-runs .rp-item").forEach((el) => {
+    el.onclick = async () => {
+      const rid = el.dataset.rid;
+      await showRunDetail(rid);
+    };
+  });
+}
+
+async function showRunDetail(runId) {
+  $("#rp-runs").classList.add("hidden");
+  $("#rp-detail").classList.remove("hidden");
+  $("#rp-detail-title").textContent = "加载中…";
+  $("#rp-timeline").innerHTML = "";
+  try {
+    const data = await api(`/api/runs/${runId}`);
+    const r = data.run;
+    const events = data.events || [];
+    const dur = r.ended_at ? (r.ended_at - r.started_at) : 0;
+    $("#rp-detail-title").textContent = r.user_input.slice(0, 50) + (r.user_input.length > 50 ? "…" : "");
+    const headHtml = `
+      <div class="rp-run-head">
+        <span class="rp-badge ${r.status}">${r.status}</span>
+        <span>入口: ${esc(r.entry_agent)}</span>
+        <span>${r.total_steps} 步</span>
+        <span>${_fmtTokens(r.total_tokens)} tokens</span>
+        <span>${_fmtCost(r.total_cost)}</span>
+        <span>${_fmtDuration(dur)}</span>
+        ${r.error ? `<span class="rp-err">${esc(r.error)}</span>` : ""}
+      </div>`;
+    const timelineHtml = events.map((e) => {
+      const meta = EVENT_META[e.type] || { label: e.type, color: "var(--muted)" };
+      let body = "";
+      if (e.input) body += `<div class="rp-ev-in"><b>输入:</b> ${esc(e.input)}</div>`;
+      if (e.output) body += `<div class="rp-ev-out"><b>输出:</b> ${esc(e.output)}</div>`;
+      if (e.error) body += `<div class="rp-ev-err"><b>错误:</b> ${esc(e.error)}</div>`;
+      const meta2 = [];
+      if (e.agent) meta2.push(`<span class="rp-ev-tag">${esc(e.agent)}</span>`);
+      if (e.tool) meta2.push(`<span class="rp-ev-tag">🔧 ${esc(e.tool)}</span>`);
+      if (e.tokens) meta2.push(`<span class="rp-ev-tag">${_fmtTokens(e.tokens)} tok</span>`);
+      if (e.cost) meta2.push(`<span class="rp-ev-tag">${_fmtCost(e.cost)}</span>`);
+      if (e.duration_ms) meta2.push(`<span class="rp-ev-tag">${(e.duration_ms / 1000).toFixed(2)}s</span>`);
+      return `<div class="rp-ev" style="--ev-color:${meta.color}">
+        <div class="rp-ev-dot"></div>
+        <div class="rp-ev-body">
+          <div class="rp-ev-head">
+            <span class="rp-ev-type">${meta.label}</span>
+            ${meta2.join("")}
+          </div>
+          ${body}
+        </div>
+      </div>`;
+    }).join("");
+    $("#rp-timeline").innerHTML = headHtml + timelineHtml;
+  } catch (e) { /* api 已 toast */ }
+}
+
+// 绑定按钮
+$("#runs-btn")?.addEventListener("click", () => {
+  if (runsPanel.classList.contains("open")) {
+    closeRunsPanel();
+  } else {
+    openRunsPanel();
+  }
+});
+$("#rp-close")?.addEventListener("click", closeRunsPanel);
+$("#rp-back")?.addEventListener("click", () => {
+  $("#rp-detail").classList.add("hidden");
+  $("#rp-runs").classList.remove("hidden");
+});
+function closeRunsPanel() {
+  runsPanel.classList.remove("open");
+  // 同时关闭 scrim (仅当没其他面板打开时)
+  if (!$("#settings-panel").classList.contains("open") &&
+      !$("#skills-panel").classList.contains("open")) {
+    scrimEl?.classList.remove("show");
+  }
+}

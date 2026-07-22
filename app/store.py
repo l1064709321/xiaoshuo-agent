@@ -130,6 +130,41 @@ def init_db() -> None:
                 UNIQUE(project_id, character_name),
                 FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
             );
+            -- ===== 评测与可观测性 =====
+            -- 一次完整的 agent loop (从用户发输入到 SSE 结束) = 一个 run
+            CREATE TABLE IF NOT EXISTS runs (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                user_input TEXT NOT NULL,
+                entry_agent TEXT NOT NULL,        -- 入口 agent (默认 orchestrator)
+                status TEXT DEFAULT 'running',    -- running | done | error | interrupted
+                total_tokens INTEGER DEFAULT 0,  -- 累计 token (prompt+completion)
+                total_cost REAL DEFAULT 0,        -- 累计成本 (USD, 按 litellm pricing)
+                total_steps INTEGER DEFAULT 0,   -- agent loop 迭代次数
+                error TEXT,                       -- 失败时记录错误消息
+                started_at REAL NOT NULL,
+                ended_at REAL,
+                FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+            );
+            -- run 内的每个关键事件 (LLM 调用 / 工具调用 / 工具结果 / 委派 / 错误)
+            CREATE TABLE IF NOT EXISTS run_events (
+                id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                seq INTEGER NOT NULL,             -- 事件序号 (从 0 递增)
+                ts REAL NOT NULL,
+                type TEXT NOT NULL,               -- start|llm_call|tool_call|tool_result|delegate|delegate_done|error|end
+                agent TEXT,                       -- 当前活跃 agent (如 narrative-writer)
+                tool TEXT,                        -- 工具名 (tool_call/tool_result 时填)
+                input TEXT,                       -- JSON 字符串: 输入参数 / LLM prompt 摘要
+                output TEXT,                      -- JSON 字符串: 输出结果 / LLM 回复
+                tokens INTEGER,                   -- 该事件 token 数 (LLM 时填)
+                cost REAL,                        -- 该事件成本 (LLM 时填)
+                duration_ms INTEGER,              -- 耗时 (毫秒)
+                error TEXT,                       -- 错误信息 (type=error 时填)
+                FOREIGN KEY(run_id) REFERENCES runs(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_run_events_run ON run_events(run_id, seq);
+            CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id, started_at DESC);
             """
         )
 
@@ -494,3 +529,118 @@ def set_chapter_outline(cid: str, outline_blueprint: str) -> None:
 def get_chapter_outline(cid: str) -> Optional[str]:
     ch = get_chapter(cid)
     return ch.get("outline") if ch else None
+
+
+# ==================== runs / run_events (评测可观测性) ====================
+def create_run(project_id: str, user_input: str, entry_agent: str) -> str:
+    """新建一次 agent loop run, 返回 run_id。"""
+    rid = _uuid()
+    with _lock, get_conn() as c:
+        c.execute(
+            "INSERT INTO runs(id,project_id,user_input,entry_agent,status,started_at)"
+            " VALUES(?,?,?,?,'running',?)",
+            (rid, project_id, user_input, entry_agent, _now()),
+        )
+    return rid
+
+
+def add_run_event(
+    run_id: str,
+    type_: str,
+    *,
+    agent: Optional[str] = None,
+    tool: Optional[str] = None,
+    input_: Optional[dict | str] = None,
+    output: Optional[dict | str] = None,
+    tokens: Optional[int] = None,
+    cost: Optional[float] = None,
+    duration_ms: Optional[int] = None,
+    error: Optional[str] = None,
+) -> int:
+    """追加一个事件到 run。返回 seq 序号。
+    input_/output 接受 dict 或 str, dict 会被 JSON 序列化。
+    """
+    def _ser(v):
+        if v is None:
+            return None
+        if isinstance(v, str):
+            return v
+        return json.dumps(v, ensure_ascii=False, default=str)
+    # 取当前 seq (max+1)
+    with _lock, get_conn() as c:
+        row = c.execute(
+            "SELECT COALESCE(MAX(seq),-1)+1 AS n FROM run_events WHERE run_id=?", (run_id,)
+        ).fetchone()
+        seq = row["n"]
+        eid = _uuid()
+        c.execute(
+            "INSERT INTO run_events(id,run_id,seq,ts,type,agent,tool,input,output,tokens,cost,duration_ms,error)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (eid, run_id, seq, _now(), type_, agent, tool,
+             _ser(input_), _ser(output), tokens, cost, duration_ms, error),
+        )
+        # 增量更新 runs 累计字段 (避免回放时重算)
+        if tokens:
+            c.execute("UPDATE runs SET total_tokens=total_tokens+? WHERE id=?", (tokens, run_id))
+        if cost:
+            c.execute("UPDATE runs SET total_cost=total_cost+? WHERE id=?", (cost, run_id))
+        if type_ == "llm_call":
+            c.execute("UPDATE runs SET total_steps=total_steps+1 WHERE id=?", (run_id,))
+    return seq
+
+
+def finish_run(run_id: str, status: str = "done", error: Optional[str] = None) -> None:
+    """结束一次 run。status: done | error | interrupted"""
+    with _lock, get_conn() as c:
+        c.execute(
+            "UPDATE runs SET status=?, error=?, ended_at=? WHERE id=?",
+            (status, error, _now(), run_id),
+        )
+
+
+def list_runs(project_id: str, limit: int = 50) -> list[dict]:
+    """列出项目的 run 历史 (最近在前)。"""
+    with get_conn() as c:
+        rows = c.execute(
+            "SELECT * FROM runs WHERE project_id=? ORDER BY started_at DESC LIMIT ?",
+            (project_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_run(run_id: str) -> Optional[dict]:
+    with get_conn() as c:
+        r = c.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
+        return dict(r) if r else None
+
+
+def list_run_events(run_id: str) -> list[dict]:
+    """按 seq 顺序返回 run 的所有事件 (回放用)。"""
+    with get_conn() as c:
+        rows = c.execute(
+            "SELECT * FROM run_events WHERE run_id=? ORDER BY seq ASC", (run_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def aggregate_project_metrics(project_id: str) -> dict:
+    """项目级聚合指标: 总 run 数 / 总 token / 总成本 / 平均耗时 / 工具调用次数。"""
+    with get_conn() as c:
+        r = c.execute(
+            "SELECT COUNT(*) n, COALESCE(SUM(total_tokens),0) tok, "
+            "COALESCE(SUM(total_cost),0) cost, "
+            "COALESCE(AVG(ended_at-started_at),0) avg_dur "
+            "FROM runs WHERE project_id=? AND ended_at IS NOT NULL",
+            (project_id,),
+        ).fetchone()
+        tool_n = c.execute(
+            "SELECT COUNT(*) n FROM run_events re JOIN runs r ON re.run_id=r.id "
+            "WHERE r.project_id=? AND re.type='tool_call'", (project_id,),
+        ).fetchone()
+        return {
+            "total_runs": r["n"],
+            "total_tokens": r["tok"],
+            "total_cost_usd": round(r["cost"], 4),
+            "avg_run_duration_sec": round(r["avg_dur"], 2),
+            "total_tool_calls": tool_n["n"],
+        }

@@ -159,6 +159,39 @@ def clear_messages(pid: str):
     return {"ok": True}
 
 
+# ---------- runs / run_events (评测可观测性) ----------
+@app.get("/api/projects/{pid}/runs")
+def list_runs(pid: str, limit: int = 50):
+    """列出项目的 agent loop run 历史 (最近在前)。"""
+    return store.list_runs(pid, limit=limit)
+
+
+@app.get("/api/runs/{run_id}")
+def get_run_detail(run_id: str):
+    """取单个 run 的元数据 + 全部事件 (按 seq 顺序,用于回放)。"""
+    run = store.get_run(run_id)
+    if not run:
+        return {"error": "run not found"}, 404
+    events = store.list_run_events(run_id)
+    return {"run": run, "events": events}
+
+
+@app.get("/api/projects/{pid}/metrics")
+def project_metrics(pid: str):
+    """项目级聚合指标: 总 run 数 / token / 成本 / 平均耗时 / 工具调用次数。"""
+    return store.aggregate_project_metrics(pid)
+
+
+@app.delete("/api/runs/{run_id}")
+def delete_run(run_id: str):
+    """删除单条 run + 其全部 events (CASCADE)。"""
+    from .store import get_conn, _lock
+    with _lock, get_conn() as c:
+        c.execute("DELETE FROM run_events WHERE run_id=?", (run_id,))
+        c.execute("DELETE FROM runs WHERE id=?", (run_id,))
+    return {"ok": True}
+
+
 # ---------- agent (SSE 流式) ----------
 class AgentIn(BaseModel):
     input: str

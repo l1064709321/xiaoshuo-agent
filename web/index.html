@@ -64,6 +64,10 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3 7h7l-5.5 4.5L18 21l-6-4-6 4 1.5-7.5L2 9h7z"/></svg>
           <span class="btn-label">技能</span>
         </button>
+        <button class="btn ghost icon-btn with-label" id="runs-btn" title="运行历史 (每次对话的 trace 回放/成本/耗时)">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <span class="btn-label">历史</span>
+        </button>
         <button class="btn ghost icon-btn with-label" id="settings-btn" title="设置 (模型/参数/密钥)">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           <span class="btn-label">设置</span>
@@ -215,6 +219,28 @@
           <button class="btn primary" id="sk-save">保存技能</button>
         </div>
       </div>
+    </div>
+  </div>
+</aside>
+
+<!-- 运行历史面板 (trace 回放) -->
+<aside class="settings-panel" id="runs-panel">
+  <div class="sp-head">
+    <span>📜 运行历史</span>
+    <button class="btn ghost sm" id="rp-close">✕</button>
+  </div>
+  <div class="sp-body" id="rp-body">
+    <!-- 项目级聚合指标 -->
+    <div class="rp-metrics" id="rp-metrics">加载中…</div>
+    <!-- run 列表 -->
+    <div class="rp-runs" id="rp-runs"></div>
+    <!-- run 详情 + 回放 (点列表项后显示) -->
+    <div class="rp-detail hidden" id="rp-detail">
+      <div class="rp-detail-head">
+        <button class="btn ghost sm" id="rp-back">← 返回列表</button>
+        <span id="rp-detail-title"></span>
+      </div>
+      <div class="rp-timeline" id="rp-timeline"></div>
     </div>
   </div>
 </aside>
