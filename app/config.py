@@ -431,7 +431,8 @@ def update_model_config(model: str, *, api_key: str | None = None, api_base: str
         if m.model == model:
             target = m
             break
-    if target is None:
+    is_new = target is None
+    if is_new:
         target = ModelConfig(model=model)
         s.models.append(target)
     if api_key is not None:
@@ -442,6 +443,10 @@ def update_model_config(model: str, *, api_key: str | None = None, api_base: str
         target.temperature = temperature
     if max_tokens is not None:
         target.max_tokens = max_tokens
+    # 添加新模型时,若 default 还指向占位/已删模型,自动把新模型设为 default
+    # (场景: 用户删空后加新模型, default 应该自动跟过来)
+    if is_new and (not s.models or s.default_model.model not in [m.model for m in s.models]):
+        s.default_model = target
     # 若是当前默认模型,同步
     if s.default_model.model == model:
         s.default_model = target
@@ -450,13 +455,12 @@ def update_model_config(model: str, *, api_key: str | None = None, api_base: str
 
 def remove_model_config(model: str) -> None:
     s = get_settings()
-    # 防止误删: 不允许删除当前 default (会让 default 指向已删模型,前后端状态错乱)
-    if s.default_model.model == model and len(s.models) <= 1:
-        raise ValueError("至少保留一个模型;不能删除当前默认且唯一的模型")
     s.models = [m for m in s.models if m.model != model]
-    # 删的是 default 时,自动切到列表第一个
-    if s.default_model.model == model and s.models:
-        s.default_model = s.models[0]
+    # 删的是 default 时:
+    #   - 还有其他模型,自动切到列表第一个
+    #   - 列表空了,重置 default 为空白占位 (前端显示"未配置模型",可继续添加新模型)
+    if s.default_model.model == model:
+        s.default_model = s.models[0] if s.models else ModelConfig()
     save_settings()
 
 

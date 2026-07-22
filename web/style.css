@@ -394,6 +394,9 @@ body{font-family:var(--sans);background:var(--paper);color:var(--ink);font-size:
 .mc-del:hover{color:#fff;background:var(--red);border-color:var(--red)}
 .mc-del.warn{color:#fff;background:var(--red);border-color:var(--red);animation:na-blink .8s ease-in-out infinite alternate}
 @keyframes na-blink{from{opacity:.7}to{opacity:1}}
+.mc-empty{padding:24px 12px;text-align:center;color:var(--muted);border:1px dashed var(--border);border-radius:8px;margin:8px 0}
+.mc-empty .mc-empty-icon{font-size:32px;margin-bottom:6px;opacity:.6}
+.mc-empty p{margin:2px 0}
 .mc-fields{display:grid;gap:6px}
 .mc-fields .sp-field{margin:0}
 .add-model{background:var(--paper);border:1px dashed var(--border);border-radius:8px;padding:12px}

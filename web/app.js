@@ -1445,6 +1445,14 @@ function renderSettings() {
 
   // ---- 已配置模型列表 ----
   parts.push(`<div class="sp-sec"><div class="sp-sec-title">已配置模型 (${d.models.length})</div>`);
+  if (d.models.length === 0) {
+    // 删空后: 显示空状态提示,引导用户去下方"+ 添加模型"区块添加
+    parts.push(`<div class="mc-empty">
+      <div class="mc-empty-icon">📭</div>
+      <p>暂无已配置模型</p>
+      <p class="muted">在下方"+ 添加模型"区块选择厂商或填自定义模型名</p>
+    </div>`);
+  }
   for (const m of d.models) {
     const badges = [];
     if (m.is_default) badges.push(`<span class="mc-badge def">默认</span>`);

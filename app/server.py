@@ -398,13 +398,8 @@ class ModelDelIn(BaseModel):
 @app.delete("/api/settings/model")
 def del_model_cfg(body: ModelDelIn):
     from .config import remove_model_config
-    from fastapi import HTTPException
 
-    try:
-        remove_model_config(body.model)
-    except ValueError as e:
-        # 删除约束违反 (如删最后一个模型): 返回 400 + 错误消息, 前端 toast 显示
-        raise HTTPException(status_code=400, detail=str(e))
+    remove_model_config(body.model)
     return {"ok": True}
 
 
