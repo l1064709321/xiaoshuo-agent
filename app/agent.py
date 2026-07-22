@@ -19,6 +19,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -365,15 +366,32 @@ async def run(
 
     yield _event({"type": "start", "agent": agent_name, "input": user_input, "run_id": run_id})
 
+    # 工具调用循环检测: 记录 (tool_name, args_hash) → 连续调用次数
+    # 连续相同调用超阈值 = LLM 卡循环了, 强制终止
+    _tool_call_counter: dict[tuple, int] = {}
+
     for step in range(s.max_steps):
         # 先把子 agent 委派过程中累积的事件吐出去
         while event_queue:
             yield event_queue.pop(0)
 
         t0 = time.time()
+        # 用 task 包装 LLM 调用, 等待期间定期 yield 心跳, 防前端误判断连
+        hb = s.sse_heartbeat_interval
+        llm_task = asyncio.ensure_future(chat(messages, s.default_model, tools=tool_schema))
         try:
-            # 同上: 默认非 reasoning 模型,4096 够用
-            resp = await chat(messages, s.default_model, tools=tool_schema)
+            if hb <= 0:
+                resp = await llm_task
+            else:
+                while True:
+                    done, _ = await asyncio.wait(
+                        {llm_task}, timeout=hb, return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if llm_task in done:
+                        break
+                    yield _event({"type": "heartbeat", "ts": time.time(),
+                                  "run_id": run_id})
+                resp = llm_task.result()
         except Exception as e:
             logger.error(f"[{agent_name}] step={step} LLM 调用失败: {e}")
             store.add_run_event(run_id, "error", agent=agent_name,
@@ -391,6 +409,24 @@ async def run(
                             output=_truncate_for_trace(content, 400),
                             tokens=tok, cost=cost,
                             duration_ms=int((time.time()-t0)*1000))
+
+        # ===== 风险防护: 单次 run 累计超限就终止 =====
+        # 防止 LLM 失控 / agent 卡循环 / 烧钱
+        run_meta = store.get_run(run_id) or {}
+        if run_meta.get("total_tokens", 0) > s.run_max_tokens:
+            msg = f"单次 run token 超限 ({run_meta['total_tokens']} > {s.run_max_tokens}),已终止"
+            logger.warning(f"[{agent_name}] {msg}")
+            store.add_run_event(run_id, "error", agent=agent_name, error=msg)
+            store.finish_run(run_id, status="interrupted", error=msg)
+            yield _event({"type": "error", "message": msg, "run_id": run_id})
+            return
+        if run_meta.get("total_cost", 0) > s.run_max_cost:
+            msg = f"单次 run 成本超限 (${run_meta['total_cost']:.4f} > ${s.run_max_cost}),已终止"
+            logger.warning(f"[{agent_name}] {msg}")
+            store.add_run_event(run_id, "error", agent=agent_name, error=msg)
+            store.finish_run(run_id, status="interrupted", error=msg)
+            yield _event({"type": "error", "message": msg, "run_id": run_id})
+            return
 
         if not tool_calls:
             logger.info(f"[{agent_name}] step={step} 完成 回答长度={len(content or '')}")
@@ -437,13 +473,50 @@ async def run(
                 fargs = json.loads(tc.function.arguments or "{}")
             except Exception:
                 fargs = {}
+            # ===== 工具调用循环检测 =====
+            # 连续相同 (tool, args) 调用 = LLM 卡循环了, 强制终止
+            # 不同工具调用时重置计数器 (只检测"连续相同")
+            args_key = (fname, json.dumps(fargs, sort_keys=True, ensure_ascii=False))
+            if list(_tool_call_counter.keys()) == [args_key]:
+                _tool_call_counter[args_key] += 1
+            else:
+                _tool_call_counter = {args_key: 1}
+            if _tool_call_counter[args_key] > s.loop_detect_count:
+                cnt = _tool_call_counter[args_key]
+                msg = (f"工具 {fname} 连续调用 {cnt} 次 (参数相同), "
+                       f"疑似 LLM 卡循环 (阈值 {s.loop_detect_count}), 已终止")
+                logger.warning(f"[{agent_name}] {msg}")
+                store.add_run_event(run_id, "error", agent=agent_name,
+                                    tool=fname, error=msg)
+                store.finish_run(run_id, status="interrupted", error=msg)
+                yield _event({"type": "error", "message": msg,
+                              "run_id": run_id, "reason": "loop_detected"})
+                return
             logger.info(f"[{agent_name}] step={step} → 调工具 {fname} args={_trunc(json.dumps(fargs, ensure_ascii=False), 150)}")
             yield _event({
                 "type": "step", "agent": agent_name, "tool": fname,
                 "args": fargs, "thinking": content,
             })
-            result = await _exec_tool(pid, fname, fargs, depth=0, emit=emit,
-                                       agent_name=agent_name, run_id=run_id)
+            # 用 task 包装工具调用, 等待期间定期 yield 心跳 + 实时吐出
+            # 子 agent 委派过程中的 delegate/delegate_done 事件 (前端能看到协同进度)
+            exec_task = asyncio.ensure_future(_exec_tool(
+                pid, fname, fargs, depth=0, emit=emit,
+                agent_name=agent_name, run_id=run_id,
+            ))
+            if hb <= 0:
+                result = await exec_task
+            else:
+                while True:
+                    done, _ = await asyncio.wait(
+                        {exec_task}, timeout=hb, return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    while event_queue:
+                        yield event_queue.pop(0)
+                    if exec_task in done:
+                        break
+                    yield _event({"type": "heartbeat", "ts": time.time(),
+                                  "run_id": run_id})
+                result = exec_task.result()
             logger.info(f"[{agent_name}] step={step} ← 工具 {fname} 结果={_trunc(result, 200)}")
             # 若该工具触发过子 agent,事件已累积在队列里,这里先吐队列
             while event_queue:

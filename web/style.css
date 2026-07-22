@@ -337,6 +337,22 @@ body{font-family:var(--sans);background:var(--paper);color:var(--ink);font-size:
 .tree-file .ico{width:14px;text-align:center;opacity:.85}
 .tree-file .name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tree-file .meta{color:var(--muted);font-size:11px}
+
+/* 章节状态徽章 (draft=不显示) */
+.ch-badge{display:inline-flex;align-items:center;justify-content:center;
+  width:14px;height:14px;border-radius:50%;font-size:10px;line-height:1;font-weight:700}
+.ch-badge.generating{color:var(--amber,#f59e0b);animation:pulse 1.2s ease-in-out infinite}
+.ch-badge.written{color:var(--green,#10b981)}
+.ch-badge.failed{color:var(--red,#ef4444)}
+.tree-file.is-generating{opacity:.7}
+.tree-file.is-generating .name{font-style:italic}
+.tree-file.is-failed .name{color:var(--red,#ef4444);text-decoration:line-through;opacity:.6}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* 顶栏运行时长指示 (心跳驱动) */
+.run-elapsed{color:var(--amber,#f59e0b);font-size:12px;font-weight:600;
+  padding:2px 8px;background:rgba(245,158,11,.1);border-radius:8px;
+  white-space:nowrap;margin-left:4px}
 .tree-file .edel{opacity:0;background:transparent;border:none;color:var(--muted);
   cursor:pointer;font-size:12px;padding:0 2px}
 .tree-file:hover .edel{opacity:.6}

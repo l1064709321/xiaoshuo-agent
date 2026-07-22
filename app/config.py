@@ -47,6 +47,15 @@ class Settings:
     models: list[ModelConfig] = field(default_factory=list)
     # agent loop 最大迭代次数
     max_steps: int = 8
+    # 风险防护: 单次 run 累计 token 上限 (防 LLM 失控烧钱,默认 200k)
+    run_max_tokens: int = 200_000
+    # 风险防护: 单次 run 累计成本上限 USD (防意外飙升,默认 $1)
+    run_max_cost: float = 1.0
+    # 风险防护: 同一工具+同一参数连续调用次数上限 (防循环)
+    loop_detect_count: int = 5
+    # SSE 心跳间隔 (秒). 主 agent 在 LLM/工具调用阻塞期间定期 yield 心跳,
+    # 防止前端长时间无数据误判为断连. 0 = 关闭.
+    sse_heartbeat_interval: float = 15.0
     # 上传小说分块大小 (字符数)
     chunk_size: int = 2000
     chunk_overlap: int = 200

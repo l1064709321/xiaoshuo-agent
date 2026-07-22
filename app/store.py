@@ -167,6 +167,38 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id, started_at DESC);
             """
         )
+    # 中断恢复: 上次进程异常退出 (kill/崩溃) 会留下 status='running' 的孤儿 run
+    # 和 status='generating' 的孤儿章节。重启时统一标记为 interrupted/failed,
+    # 让前端能识别"上次没跑完",而不是永远显示"运行中"
+    recover_interrupted()
+
+
+def recover_interrupted() -> dict:
+    """把上次未完成的 run 和章节标记为中断/失败状态。
+
+    场景: 服务被 kill -9 / OOM / 容器重启, agent loop 跑到一半挂了,
+    数据库里还留着 status='running' 的 run 和 status='generating' 的章节。
+    重启后这些状态会一直挂着, 前端显示"运行中"误导用户。
+    本函数在 init_db 时自动调用, 也可手动调。
+    """
+    now = _now()
+    with _lock, get_conn() as c:
+        runs = c.execute(
+            "SELECT id FROM runs WHERE status='running'"
+        ).fetchall()
+        for r in runs:
+            c.execute(
+                "UPDATE runs SET status='interrupted', error='进程重启时检测到未完成,自动标记中断', ended_at=? WHERE id=?",
+                (now, r["id"]),
+            )
+        chs = c.execute(
+            "SELECT id FROM chapters WHERE status='generating'"
+        ).fetchall()
+        for ch in chs:
+            c.execute(
+                "UPDATE chapters SET status='failed' WHERE id=?", (ch["id"],)
+            )
+    return {"recovered_runs": len(runs), "recovered_chapters": len(chs)}
 
 
 def _uuid() -> str:

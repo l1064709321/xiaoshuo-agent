@@ -233,19 +233,32 @@ async def continue_writing(
         f"# 续写要求\n{instruction or '自然推进情节,保持张力。'}\n"
         f"续写约 {length} 字正文,直接输出小说内容。"
     )
+    # 状态机: 进入"生成中", 写完切"已写完", 异常切"失败"
+    # 让前端能区分"在写"vs"写完了"vs"挂了", 不是黑盒
+    store.update_chapter(target["id"], status="generating")
     pieces: list[str] = []
-    async for tok in stream(
-        [{"role": "system", "content": system}, {"role": "user", "content": user}],
-        get_settings().default_model,
-        temperature=0.85,
-        max_tokens=max(1024, int(length * 2)),
-    ):
-        pieces.append(tok)
+    try:
+        async for tok in stream(
+            [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            get_settings().default_model,
+            temperature=0.85,
+            max_tokens=max(1024, int(length * 2)),
+        ):
+            pieces.append(tok)
+    except Exception as e:
+        # 失败: 切回 draft, 保留已有 content 不丢, 标记 failed 让前端能重试
+        store.update_chapter(target["id"], status="failed")
+        return {"chapter_id": target["id"], "title": target["title"],
+                "error": f"生成失败: {e}", "existing_chars": len(target.get("content") or "")}
     new_text = "".join(pieces)
+    if not new_text.strip():
+        store.update_chapter(target["id"], status="failed")
+        return {"chapter_id": target["id"], "title": target["title"],
+                "error": "生成内容为空", "existing_chars": len(target.get("content") or "")}
 
     # 追加到该章节内容
     merged = (target.get("content") or "") + ("\n" if target.get("content") else "") + new_text
-    store.update_chapter(target["id"], content=merged, status="writing")
+    store.update_chapter(target["id"], content=merged, status="written")
     return {
         "chapter_id": target["id"],
         "title": target["title"],

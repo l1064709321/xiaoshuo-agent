@@ -369,9 +369,16 @@ function renderTree() {
   }
   chs.forEach((c) => {
     const n = (c.content || "").length;
-    parts.push(`<div class="tree-file" data-chapter="${c.id}">
+    // 状态徽章: draft=不显示 (简洁), generating=脉冲黄, written=绿✓, failed=红✗
+    const st = c.status || "draft";
+    let badge = "";
+    if (st === "generating") badge = `<span class="ch-badge generating" title="生成中">●</span>`;
+    else if (st === "written") badge = `<span class="ch-badge written" title="已写完">✓</span>`;
+    else if (st === "failed") badge = `<span class="ch-badge failed" title="生成失败,可重试">✗</span>`;
+    parts.push(`<div class="tree-file${st === "generating" ? " is-generating" : ""}${st === "failed" ? " is-failed" : ""}" data-chapter="${c.id}">
       <span class="ico">${FILE_ICON.chapter}</span>
       <span class="name">${String(c.idx + 1).padStart(2, "0")}. ${esc(c.title)}</span>
+      ${badge}
       <span class="meta">${n ? n + "字" : "草稿"}</span></div>`);
   });
   parts.push(`</div></div>`);
@@ -633,6 +640,8 @@ function handleEvent(evt, assistant) {
   const bubble = assistant.el;
   switch (evt.type) {
     case "start":
+      // 记录 run 开始时间, 心跳事件里用来显示"已运行 X 秒"
+      window.__naRunStartTs = Date.now();
       break;
     case "delegate": {
       // 委派事件:显示总编 → 专家 的协同 + 自动更新活跃 agent 芯片
@@ -710,8 +719,27 @@ function handleEvent(evt, assistant) {
       if (caret) caret.remove();
       break;
     }
+    case "heartbeat":
+      // 心跳: 仅保活, 不渲染。可选用来更新"已运行时长"
+      if (window.__naRunStartTs) {
+        const elapsed = Math.max(0, Math.round((Date.now() - window.__naRunStartTs) / 1000));
+        const hd = document.getElementById("run-elapsed");
+        if (hd) {
+          hd.hidden = false;
+          hd.textContent = elapsed > 0 ? `已运行 ${elapsed}s` : "";
+        }
+      }
+      break;
     case "error":
       bubble.innerHTML += `<div class="err">错误: ${esc(evt.message)}</div>`;
+      // 风险防护超限: 用 toast 突出提示 (不止在气泡里)
+      if (evt.reason === "loop_detected" ||
+          (evt.message && (evt.message.includes("超限") || evt.message.includes("卡循环")))) {
+        toast(`⚠️ ${evt.message}`, "warn", 6000);
+      }
+      window.__naRunStartTs = null;
+      const hdErr = document.getElementById("run-elapsed");
+      if (hdErr) { hdErr.textContent = ""; hdErr.hidden = true; }
       break;
     case "done":
       if (!assistant.answerEl) {
@@ -731,6 +759,20 @@ function handleEvent(evt, assistant) {
       }
       // 任务完成,活跃 agent 回到 orchestrator(总编)
       updateActiveAgent("orchestrator");
+      window.__naRunStartTs = null;
+      const hd = document.getElementById("run-elapsed");
+      if (hd) { hd.textContent = ""; hd.hidden = true; }
+      // 刷新章节列表: 状态徽章 / 字数 / 新增章节需要从后端拉最新
+      if (currentProject) {
+        api(`/api/projects/${currentProject.id}`).then((p) => {
+          if (p && currentProject) {
+            currentProject.chapters = p.chapters || [];
+            currentProject.elements = p.elements || currentProject.elements;
+            currentProject.meta = p.meta || currentProject.meta;
+            renderTree();
+          }
+        }).catch(() => {});
+      }
       scrollChat();
       break;
   }
