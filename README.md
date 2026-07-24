@@ -1,9 +1,12 @@
-# Novel Agent
+# 小说-Agent
 
-一个类似 Codex 的**小说创作 Agent**(Web 界面)。7 个 agent 协同,按 8 阶段工作流完成从扫榜调研到定稿入库的完整长篇创作闭环,内置「毒舌总编」审稿机制与质检打回循环。
+一个多Agent协同的**小说创作 Agent**(Web 界面)。7 个 agent 协同,按 8 阶段工作流完成从扫榜调研到定稿入库的完整长篇创作闭环,内置「毒舌总编」审稿机制与质检打回循环。
 
-![Python](https://img.shields.io/badge/Python-3.10+-blue) ![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-green) ![License](https://img.shields.io/badge/license-MIT-lightgrey)
-
+![Python](https://img.shields.io/badge/Python-3.10+-blue) 
+![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-green) 
+[![自定义协议](https://img.shields.io/badge/📄-自定义协议-0052d9)](用户服务协议.md)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL--3.0-blueviolet)](https://www.gnu.org/licenses/agpl-3.0.html)
+[![License: GPL v3](https://img.shields.io/badge/License-GPL--3.0-red)](https://www.gnu.org/licenses/gpl-3.0.html)
 ---
 
 ## ✨ 核心特性
@@ -145,26 +148,6 @@ novel-agent/
 
 ---
 
-## 🔒 上传前安全扫描
-
-每次推送代码到 GitHub 前,先跑扫描脚本,避免误传密钥/token:
-
-```bash
-bash pre-upload.sh
-```
-
-脚本会:
-1. 确认 git 仓库
-2. 检查 `.gitignore` 是否排除了 `config.yaml` / `__pycache__` / `data` / `.novel-agent` / `*.log`
-3. 扫描改动文件中的敏感信息模式(`sk-` / `sk-ant-` / `AIza` / `github_pat_` / `ghp_` / Slack token / 私钥头)
-4. 列出将要上传的文件清单
-
-**退出码**:`0` = 干净可上传;`2` = 发现敏感信息已拦截。
-
-`.gitignore` 已排除:`config.yaml`(含密钥)、`data/`(项目数据)、`__pycache__/`、`*.log`、`.novel-agent/`。
-
----
-
 ## 🛠 技术栈
 
 - **后端**:Python 3.10+ / FastAPI / litellm(多模型统一调用)
@@ -185,4 +168,19 @@ bash pre-upload.sh
 
 ## 📜 License
 
-MIT
+### 📜 许可证与用户协议
+
+本项目采用 **三开源协议** 结构：
+
+- **[自定义协议（《用户服务协议》）](USER_AGREEMENT.md)**：规定用户在使用本项目时的权利与义务（输入/输出归用户所有、禁止抄袭洗稿、AI 仿写语料库等）。**使用本项目即表示您已阅读并同意本协议**。
+- **[AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.html)**：适用于核心代码，要求修改后的版本在分发时公开源代码，且对网络服务有更强的 Copyleft 约束。
+- **[GPL-3.0](https://www.gnu.org/licenses/gpl-3.0.html)**：同样适用于核心代码，要求衍生作品在分发时以相同许可证公开源代码。
+
+您可以选择 AGPL-3.0 或 GPL-3.0 中的任一许可证，**但无论选择哪一个，都必须同时遵守《用户服务协议》**。
+
+---
+
+[![自定义协议](https://img.shields.io/badge/📄-自定义协议-0052d9)](USER_AGREEMENT.md)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL--3.0-blueviolet)](https://www.gnu.org/licenses/agpl-3.0.html)
+[![License: GPL v3](https://img.shields.io/badge/License-GPL--3.0-red)](https://www.gnu.org/licenses/gpl-3.0.html)
+---
