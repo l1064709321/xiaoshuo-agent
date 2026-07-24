@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>小说Agent · 内容成分卡片</title>
+<style>
+  :root {
+    --bg: #0f0f0f;
+    --card: #1a1a1a;
+    --border: #2a2a2a;
+    --text: #e0ddd5;
+    --muted: #8a8a8a;
+    --accent: #c9a96e;
+    --accent2: #6b8fa3;
+    --danger: #c45a5a;
+    --warn: #d4a844;
+    --ok: #5a9e6f;
+    --tag-bg: #252525;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "PingFang SC", "Microsoft YaHei", "Noto Serif SC", serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.8;
+    padding: 32px 16px;
+  }
+  .container { max-width: 800px; margin: 0 auto; }
+
+  /* Header */
+  .header {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 32px 28px;
+    margin-bottom: 20px;
+    position: relative;
+    overflow: hidden;
+  }
+  .header::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--accent), var(--accent2), var(--danger));
+  }
+  .header h1 { font-size: 28px; font-weight: 700; color: var(--accent); }
+  .header .subtitle { font-size: 14px; color: var(--muted); margin-top: 6px; }
+  .header .meta-row {
+    display: flex; gap: 16px; flex-wrap: wrap; margin-top: 16px;
+  }
+  .header .meta-tag {
+    background: var(--tag-bg); border-radius: 8px; padding: 4px 12px;
+    font-size: 13px; color: var(--text);
+  }
+
+  /* Stat cards row */
+  .stat-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .stat-card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 18px 16px; text-align: center;
+  }
+  .stat-card .num { font-size: 32px; font-weight: 800; }
+  .stat-card .label { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .num.accent { color: var(--accent); }
+  .num.accent2 { color: var(--accent2); }
+  .num.ok { color: var(--ok); }
+  .num.warn { color: var(--warn); }
+
+  /* Section */
+  .section {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 24px; margin-bottom: 16px;
+  }
+  .section h2 {
+    font-size: 16px; font-weight: 700; margin-bottom: 14px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .section h2 .icon { font-size: 18px; }
+
+  /* Outline */
+  .outline-item {
+    padding: 12px 0; border-bottom: 1px solid var(--border);
+  }
+  .outline-item:last-child { border-bottom: none; }
+  .outline-item .ch-title {
+    font-weight: 700; font-size: 15px;
+  }
+  .outline-item .ch-title.written { color: var(--ok); }
+  .outline-item .ch-title.draft { color: var(--muted); }
+  .outline-item .ch-outline {
+    font-size: 13px; color: var(--muted); margin-top: 4px;
+  }
+  .status-dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px;
+  }
+  .status-dot.written { background: var(--ok); }
+  .status-dot.draft { background: var(--muted); }
+
+  /* Foreshadowing */
+  .fs-item {
+    background: var(--tag-bg); border-radius: 8px; padding: 10px 14px; margin-bottom: 8px;
+    font-size: 13px;
+  }
+  .fs-item .fs-name { font-weight: 700; color: var(--accent); }
+  .fs-item .fs-detail { color: var(--muted); margin-top: 2px; }
+  .fs-item .fs-meta { font-size: 11px; color: var(--warn); margin-top: 4px; }
+
+  /* Timeline */
+  .tl-item {
+    padding: 10px 0 10px 16px; border-left: 2px solid var(--accent2);
+    margin-bottom: 8px; font-size: 13px;
+  }
+  .tl-item .tl-time { color: var(--accent2); font-weight: 700; }
+  .tl-item .tl-event { margin-top: 2px; }
+  .tl-item .tl-cause { color: var(--muted); font-size: 12px; margin-top: 2px; }
+
+  /* Character */
+  .char-item {
+    background: var(--tag-bg); border-radius: 8px; padding: 12px 14px; margin-bottom: 8px;
+  }
+  .char-item .char-name { font-weight: 700; color: var(--accent2); font-size: 14px; }
+  .char-item .char-state { font-size: 13px; color: var(--text); margin-top: 4px; }
+  .char-item .char-change { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+  /* Content preview */
+  .content-preview {
+    font-size: 14px; line-height: 2;
+    max-height: 400px; overflow-y: auto;
+    padding-right: 8px;
+  }
+  .content-preview p { margin-bottom: 12px; }
+  .content-preview::-webkit-scrollbar { width: 4px; }
+  .content-preview::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  /* DeAI tag */
+  .deai-tags { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .deai-tag {
+    padding: 3px 10px; border-radius: 6px; font-size: 11px;
+    font-weight: 600;
+  }
+  .deai-tag.blocking { background: rgba(196,90,90,0.15); color: var(--danger); }
+  .deai-tag.advisory { background: rgba(212,168,68,0.15); color: var(--warn); }
+  .deai-tag.ok { background: rgba(90,158,111,0.15); color: var(--ok); }
+
+  /* Progress bar */
+  .progress-bar {
+    height: 8px; background: var(--border); border-radius: 4px; margin-top: 8px;
+    overflow: hidden;
+  }
+  .progress-bar .fill {
+    height: 100%; background: linear-gradient(90deg, var(--ok), var(--accent));
+    border-radius: 4px; transition: width 0.3s;
+  }
+
+  /* Footer */
+  .footer {
+    text-align: center; font-size: 12px; color: var(--muted);
+    padding: 24px 0 8px;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Header -->
+  <div class="header">
+    <h1>写小说测试</h1>
+    <div class="subtitle">由 小说Agent 创作 · 2026-07-24</div>
+    <div class="meta-row">
+      <span class="meta-tag">悬疑</span>
+      <span class="meta-tag">冷峻写实</span>
+      <span class="meta-tag">女频</span>
+      <span class="meta-tag">心理惊悚</span>
+    </div>
+    <div style="margin-top:12px;font-size:13px;color:var(--muted);">
+      核心设定：一个失忆的女人在精神病院醒来，发现所有人都叫她另一个名字
+    </div>
+  </div>
+
+  <!-- Stat Row -->
+  <div class="stat-row">
+    <div class="stat-card">
+      <div class="num accent">3</div>
+      <div class="label">章节大纲</div>
+    </div>
+    <div class="stat-card">
+      <div class="num ok">1</div>
+      <div class="label">已完成章节</div>
+    </div>
+    <div class="stat-card">
+      <div class="num accent2">3,490</div>
+      <div class="label">第1章字数</div>
+    </div>
+    <div class="stat-card">
+      <div class="num warn">4</div>
+      <div class="label">伏笔埋设</div>
+    </div>
+    <div class="stat-card">
+      <div class="num ok">4</div>
+      <div class="label">时间线事件</div>
+    </div>
+  </div>
+
+  <!-- 章节大纲 -->
+  <div class="section">
+    <h2><span class="icon">&#128218;</span> 章节大纲</h2>
+    <div class="outline-item">
+      <div class="ch-title written">
+        <span class="status-dot written"></span>第1章：空洞的镜像
+      </div>
+      <div class="ch-outline">女主在冰冷的手术台上苏醒，头痛欲裂。医生和护士亲切地称呼她为"林薇"，递上印有该名字的药瓶。她拒绝进食，坚称自己不是林薇，却被视为典型的解离性遗忘症状。深夜，她在镜中看见自己的脸苍白陌生，却在衣柜底层发现一本不属于这个房间的日记，第一页写着："如果她们叫你林薇，杀了第一个信的人。"</div>
+    </div>
+    <div class="outline-item">
+      <div class="ch-title draft">
+        <span class="status-dot draft"></span>第2章：排练好的悲剧
+      </div>
+      <div class="ch-outline">女主假装顺从，暗中观察病房规律。她发现病友的行为逻辑高度一致，仿佛都在配合一场演出。主治医生的问话精准预言了她的恐惧，医生手中案件卷宗里照片是自己的脸，备注栏被涂黑。她潜入档案室，发现所有病历指向同一起未被报道的连环失踪案，受害者名单里有她熟悉的童年玩伴。</div>
+    </div>
+    <div class="outline-item">
+      <div class="ch-title draft">
+        <span class="status-dot draft"></span>第3章：替换协议
+      </div>
+      <div class="ch-outline">女主试图制造混乱逃离医院，触发警报被强力束缚。麻醉时听到医护人员讨论"第42号模拟体情绪波动过大，建议启动重置程序"。她意识到"林薇"是被创造的替身身份。意识模糊边缘，摸到口袋里的戒指——上面刻着加害者的代号。</div>
+    </div>
+    <div style="margin-top:12px;">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:4px;">写作进度 1/3</div>
+      <div class="progress-bar"><div class="fill" style="width:33%"></div></div>
+    </div>
+  </div>
+
+  <!-- 第1章正文预览 -->
+  <div class="section">
+    <h2><span class="icon">&#9997;</span> 第1章正文预览</h2>
+    <div class="content-preview">
+      <p>剧痛。</p>
+      <p>像生锈的锯条在脑髓里来回拉扯。</p>
+      <p>她猛地睁开眼。</p>
+      <p>视线被一片惨白占据。天花板很高，没有任何装饰，只有几盏惨白的灯管嵌在深处。光线刺得视网膜生疼。消毒水的味道浓烈到令人作呕，混杂着一股陈旧的霉味，钻进鼻腔，黏在喉咙深处。</p>
+      <p>身体不是自己的。</p>
+      <p>每一块肌肉都像是被拆解重组过，僵硬得如同灌了铅。她试图动一下手指，指尖传来的却是麻木后的刺痛，细密而尖锐，顺着神经末梢一路向上爬升。</p>
+      <p>呼吸变得困难。胸口像是压了一块巨石。</p>
+      <p style="color:var(--muted);">... (共3,490字) ...</p>
+      <p>她转过身，开始翻找房间。</p>
+      <p>拉开每一个抽屉。</p>
+    </div>
+  </div>
+
+  <!-- 去AI味检测 -->
+  <div class="section">
+    <h2><span class="icon">&#128270;</span> 去AI味检测 (DeAI Check)</h2>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:10px;">
+      写后自动执行 check_ai_patterns + check_degeneration + normalize_punctuation
+    </div>
+    <div class="deai-tags">
+      <span class="deai-tag ok">短句节奏 ✓</span>
+      <span class="deai-tag ok">情绪外化 ✓</span>
+      <span class="deai-tag ok">感官描写 ✓</span>
+      <span class="deai-tag ok">无模板化开头 ✓</span>
+      <span class="deai-tag advisory">少量书面腔</span>
+      <span class="deai-tag ok">标点标准化 ✓</span>
+    </div>
+    <div style="margin-top:12px;font-size:12px;color:var(--ok);">
+      blocking: 0 · advisory: 1 · punctuation: 0 → 可继续写作
+    </div>
+  </div>
+
+  <!-- 伏笔追踪 -->
+  <div class="section">
+    <h2><span class="icon">&#128220;</span> 伏笔追踪</h2>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">第1章埋设 4 条伏笔，均等待回收</div>
+    <div class="fs-item">
+      <div class="fs-name">日记中的警告</div>
+      <div class="fs-detail">衣柜底层发现一本黑色封皮日记，最后一页用红墨水写着："如果她们叫你林薇，杀了第一个信的人。"</div>
+      <div class="fs-meta">planted @ 第1章 · 待回收</div>
+    </div>
+    <div class="fs-item">
+      <div class="fs-name">药片的真实作用</div>
+      <div class="fs-detail">女主将白色药片滑入舌根混入唾液吞下，感到苦涩和肿胀感，暗示药物可能抑制记忆或控制意识。</div>
+      <div class="fs-meta">planted @ 第1章 · 待回收</div>
+    </div>
+    <div class="fs-item">
+      <div class="fs-name">医生的眼神与态度</div>
+      <div class="fs-detail">医生表面温和职业，但眼神冷如冰窖，对女主的否认表现出居高临下的怜悯，迅速将其定义为"解离性遗忘"。</div>
+      <div class="fs-meta">planted @ 第1章 · 待回收</div>
+    </div>
+    <div class="fs-item">
+      <div class="fs-name">房间的环境异常</div>
+      <div class="fs-detail">窗户外只有暗绿发黑的树影，看不到天空街道；门为厚重金属门配红色电子锁；走廊脚步声间隔均匀如倒计时。</div>
+      <div class="fs-meta">planted @ 第1章 · 待回收</div>
+    </div>
+  </div>
+
+  <!-- 时间线 -->
+  <div class="section">
+    <h2><span class="icon">&#9200;</span> 故事时间线</h2>
+    <div class="tl-item">
+      <div class="tl-time">苏醒后（白天/灯光全亮）</div>
+      <div class="tl-event">女主苏醒并遭遇医生问诊，被告知身份为"林薇"，诊断为解离性遗忘，被强制给药。</div>
+    </div>
+    <div class="tl-item">
+      <div class="tl-time">护士送药期间</div>
+      <div class="tl-event">女主智取药片，假装吞咽实则将药片藏于舌根吞下唾液，暂时规避药物影响。</div>
+    </div>
+    <div class="tl-item">
+      <div class="tl-time">深夜（安全出口指示灯亮起）</div>
+      <div class="tl-event">深夜探索房间，发现衣柜底部的日记本。</div>
+    </div>
+    <div class="tl-item">
+      <div class="tl-time">深夜</div>
+      <div class="tl-event">阅读日记并确认处境，得知"林薇"是代号，意识到自己处于被囚禁状态，产生复仇念头。</div>
+    </div>
+  </div>
+
+  <!-- 角色状态 -->
+  <div class="section">
+    <h2><span class="icon">&#128100;</span> 角色状态追踪</h2>
+    <div class="char-item">
+      <div class="char-name">女主（无名）</div>
+      <div class="char-state">身体虚弱但头脑清醒，充满警惕与恐惧，初步确立反抗意识</div>
+      <div class="char-change">从刚苏醒时的迷茫、头痛欲裂，转变为通过观察环境、试探药物、发现日记，逐渐认清"被囚禁"的现实，心理状态由被动承受转为主动谋划</div>
+    </div>
+    <div class="char-item">
+      <div class="char-name">医生</div>
+      <div class="char-state">掌控者，冷漠且具欺骗性</div>
+      <div class="char-change">通过言语定义女主身份（林薇）和病症（解离性遗忘），实施精神控制，强化女主的无力感和环境的压迫感</div>
+    </div>
+  </div>
+
+  <!-- 技法落地 -->
+  <div class="section">
+    <h2><span class="icon">&#127912;</span> 技法落地</h2>
+    <div class="deai-tags" style="margin-top:0;">
+      <span class="deai-tag ok">三维度揉进 ✓</span>
+      <span class="deai-tag ok">深度限知叙述 ✓</span>
+      <span class="deai-tag ok">细纲边界控制 ✓</span>
+      <span class="deai-tag ok">感官密度高</span>
+      <span class="deai-tag ok">短段+留白</span>
+      <span class="deai-tag advisory">情绪外化可加强</span>
+    </div>
+    <div style="margin-top:10px;font-size:12px;color:var(--muted);">
+      事件发生 → 角色感知 → 身体反应，三维同步推进，无平铺直叙。
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div class="footer">
+    由 小说Agent 生成 · powered by AgnesAI · 导出时间 2026-07-24
+  </div>
+
+</div>
+</body>
+</html>

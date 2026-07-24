@@ -66,6 +66,11 @@ def _trunc(s: str, n: int = 200) -> str:
     return s[:n] + ("…" if len(s) > n else "")
 
 
+def _event(obj: dict) -> str:
+    """将事件字典编码为 SSE (Server-Sent Events) 格式字符串。"""
+    return f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
+
+
 # 写入类工具白名单: 只读 agent 不允许调用这些
 WRITE_TOOLS = {
     "generate_outline", "continue_writing", "polish", "add_element", "manage_outline",
@@ -293,6 +298,9 @@ async def _run_sub_agent(
 
         tool_calls = resp["tool_calls"]
         content = resp["content"]
+        reasoning = resp.get("reasoning", "") or ""
+        # 思考过程 = reasoning + content (reasoning 是模型内部思考,content 是模型输出)
+        thinking = (reasoning + "\n" + content).strip() if reasoning else content
         # 落盘 LLM 调用事件 (token + 成本,便于回放/统计)
         if run_id:
             tok, cost = _extract_usage(resp.get("raw"))
@@ -306,7 +314,7 @@ async def _run_sub_agent(
             # 终态:返回最终文本
             logger.info(f"[{agent_name}] step={step} 完成 回答长度={len(content or '')}")
             await emit({"type": "step", "agent": agent_name, "tool": "(完成)",
-                        "args": {}, "thinking": content, "depth": depth})
+                        "args": {}, "thinking": thinking, "depth": depth})
             return content or ""
 
         messages.append({
@@ -327,7 +335,7 @@ async def _run_sub_agent(
                 fargs = {}
             logger.info(f"[{agent_name}] step={step} → 调工具 {fname} args={_trunc(json.dumps(fargs, ensure_ascii=False), 150)}")
             await emit({"type": "step", "agent": agent_name, "tool": fname,
-                        "args": fargs, "thinking": content, "depth": depth})
+                        "args": fargs, "thinking": thinking, "depth": depth})
             result = await _exec_tool(pid, fname, fargs, depth=depth, emit=emit,
                                       agent_name=agent_name, run_id=run_id)
             logger.info(f"[{agent_name}] step={step} ← 工具 {fname} 结果={_trunc(result, 200)}")
@@ -393,15 +401,27 @@ async def run(
                                   "run_id": run_id})
                 resp = llm_task.result()
         except Exception as e:
+            err_msg = str(e)
+            # 检测常见配置错误,给用户更友好的提示
+            if "Missing credentials" in err_msg or "api_key" in err_msg.lower() or "API key" in err_msg:
+                err_msg = (
+                    "API Key 未配置! 请在设置面板中为模型配置 API Key,"
+                    "或设置环境变量 OPENAI_API_KEY (或其他对应 provider 的环境变量)。"
+                    f"\n原始错误: {e}"
+                )
+            elif "timed out" in err_msg.lower() or "timeout" in err_msg.lower():
+                err_msg = f"LLM 请求超时,请检查网络或 API 端点。\n原始错误: {e}"
             logger.error(f"[{agent_name}] step={step} LLM 调用失败: {e}")
             store.add_run_event(run_id, "error", agent=agent_name,
                                 error=f"step={step} {e}", duration_ms=int((time.time()-t0)*1000))
             store.finish_run(run_id, status="error", error=str(e))
-            yield _event({"type": "error", "message": str(e), "run_id": run_id})
+            yield _event({"type": "error", "message": err_msg, "run_id": run_id})
             return
 
         tool_calls = resp["tool_calls"]
         content = resp["content"]
+        reasoning = resp.get("reasoning", "") or ""
+        thinking = (reasoning + "\n" + content).strip() if reasoning else content
         # 落盘 LLM 调用事件 (token + 成本)
         tok, cost = _extract_usage(resp.get("raw"))
         store.add_run_event(run_id, "llm_call", agent=agent_name,
@@ -495,7 +515,7 @@ async def run(
             logger.info(f"[{agent_name}] step={step} → 调工具 {fname} args={_trunc(json.dumps(fargs, ensure_ascii=False), 150)}")
             yield _event({
                 "type": "step", "agent": agent_name, "tool": fname,
-                "args": fargs, "thinking": content,
+                "args": fargs, "thinking": thinking,
             })
             # 用 task 包装工具调用, 等待期间定期 yield 心跳 + 实时吐出
             # 子 agent 委派过程中的 delegate/delegate_done 事件 (前端能看到协同进度)

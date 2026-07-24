@@ -8,6 +8,8 @@ from __future__ import annotations
 import os
 from typing import Any, AsyncIterator, Optional
 
+_HTTP_TIMEOUT = 60  # LLM 请求超时 (秒)
+
 try:
     import litellm  # type: ignore
     # 避免部分 provider 误判抛错
@@ -69,7 +71,7 @@ async def chat(
     assistant_prefill: Optional[str] = None,
     stop: Optional[list[str]] = None,
 ) -> dict:
-    """非流式补全。返回 {"content": str, "tool_calls": list}。
+    """非流式补全。返回 {"content": str, "reasoning": str, "tool_calls": list}。
 
     assistant_prefill: 预填充 assistant 开头 (原理6 Prefill),强制模型从指定前缀续写,
         常用于强制只输出 JSON (填 "{")。返回的 content 已拼回 prefill。
@@ -87,6 +89,7 @@ async def chat(
         "messages": msgs,
         "temperature": temperature if temperature is not None else cfg.temperature,
         "max_tokens": max_tokens if max_tokens is not None else cfg.max_tokens,
+        "timeout": _HTTP_TIMEOUT,
     }
     if tools:
         kwargs["tools"] = tools
@@ -104,8 +107,11 @@ async def chat(
     # 这里不把 prefill 拼回 content —— 调用方若需要拼回(如纯文本续写场景)可自行拼。
     # 工具调用场景需要模型吐完整 JSON,拼回反而会产生 {{ 双括号杂质。
     content = choice.content or ""
+    # 提取 reasoning_content (思考过程), 某些模型 (如 deepseek-r1, gpt-4o) 会返回
+    reasoning = getattr(choice, "reasoning_content", None) or ""
     return {
         "content": content,
+        "reasoning": reasoning,
         "tool_calls": getattr(choice, "tool_calls", None) or [],
         "raw": resp,
     }
@@ -137,6 +143,7 @@ async def stream(
         "temperature": temperature if temperature is not None else cfg.temperature,
         "max_tokens": eff_max if eff_max is not None else cfg.max_tokens,
         "stream": True,
+        "timeout": _HTTP_TIMEOUT,
     }
     if stop:
         kwargs["stop"] = stop

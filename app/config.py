@@ -30,7 +30,7 @@ class ModelConfig:
       - deepseek/deepseek-chat
       - openai/qwen-max   (兼容 OpenAI 协议的第三方,配合 api_base)
     """
-    model: str = "openai/gpt-4o-mini"
+    model: str = "deepseek/deepseek-chat"
     api_key: Optional[str] = None
     api_base: Optional[str] = None
     temperature: float = 0.8

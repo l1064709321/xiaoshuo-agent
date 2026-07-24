@@ -596,11 +596,14 @@ async function send(text) {
   appendMessage("user", text);
 
   const assistant = appendMessage("assistant", "", true);
-  // thinking 占位
-  const think = document.createElement("div");
-  think.className = "step-head running";
-  think.innerHTML = `<span class="dot"></span><span class="label-think">思考中<span class="thinking-dots"></span></span>`;
-  assistant.el.appendChild(think);
+  // 思考容器:独立的思考过程展示区 (像 AI 在自言自语)
+  const thinkBox = document.createElement("div");
+  thinkBox.className = "think-box";
+  thinkBox.innerHTML = `<div class="think-loading">
+    <span class="think-dot"></span>
+    <span class="think-text">正在思考<span class="thinking-dots"></span></span>
+  </div>`;
+  assistant.el.appendChild(thinkBox);
 
   try {
     const res = await fetch(`/api/projects/${currentProject.id}/chat`, {
@@ -621,79 +624,104 @@ async function send(text) {
         if (!line.startsWith("data: ")) continue;
         let evt;
         try { evt = JSON.parse(line.slice(6)); } catch { continue; }
-        // 首个事件移除 thinking 占位
-        if (think.parentNode && (evt.type === "step" || evt.type === "answer_start" || evt.type === "token")) {
-          think.remove();
-        }
-        handleEvent(evt, assistant);
+        handleEvent(evt, assistant, thinkBox);
       }
     }
-    if (think.parentNode) think.remove();
+    // 清除残留的 loading
+    const loading = thinkBox.querySelector(".think-loading");
+    if (loading) loading.remove();
   } catch (e) {
-    if (think.parentNode) think.remove();
+    const loading = thinkBox.querySelector(".think-loading");
+    if (loading) loading.remove();
     assistant.el.innerHTML = `<span class="err">连接失败: ${esc(e.message)}</span>`;
   }
-  await selectProject(currentProject.id);
 }
 
-function handleEvent(evt, assistant) {
+function handleEvent(evt, assistant, thinkBox) {
   const bubble = assistant.el;
   switch (evt.type) {
     case "start":
-      // 记录 run 开始时间, 心跳事件里用来显示"已运行 X 秒"
       window.__naRunStartTs = Date.now();
       break;
     case "delegate": {
-      // 委派事件:显示总编 → 专家 的协同 + 自动更新活跃 agent 芯片
-      const fromLbl = evt.from ? (AGENT_LABELS[evt.from] || evt.from) : "上级";
+      // 委派:在思考容器中显示
       const toLbl = AGENT_LABELS[evt.to] || evt.to;
       const toIcon = AGENT_ICONS[evt.to] || "↪";
-      // OpenClaw 模式:活跃 agent 随委派自动切换(用户无需手选)
       if (evt.to) updateActiveAgent(evt.to);
+      const loading = thinkBox.querySelector(".think-loading");
+      if (loading) loading.remove();
       const div = document.createElement("div");
-      div.className = "delegate-event";
-      div.innerHTML = `<span class="del-arrow">↳</span>
-        <span class="del-icon">${toIcon}</span>
-        <span class="del-text">委派给 <b>${toLbl}</b></span>
-        <span class="del-task">${esc((evt.task || "").slice(0, 60))}${evt.task && evt.task.length > 60 ? "…" : ""}</span>`;
-      bubble.appendChild(div);
+      div.className = "think-delegate";
+      div.innerHTML = `<span class="td-icon">${toIcon}</span>
+        <span class="td-text">委派给 <b>${toLbl}</b></span>
+        <span class="td-task">${esc((evt.task || "").slice(0, 80))}${evt.task && evt.task.length > 80 ? "…" : ""}</span>`;
+      thinkBox.appendChild(div);
       scrollChat();
       break;
     }
     case "step": {
+      const loading = thinkBox.querySelector(".think-loading");
+      if (loading) loading.remove();
       const ag = evt.agent || "";
       const agLbl = ag ? (AGENT_LABELS[ag] || ag) : "";
       const agIcon = ag ? (AGENT_ICONS[ag] || "") : "";
       const step = { tool: evt.tool, args: evt.args, thinking: evt.thinking || "", agent: ag };
       assistant.steps.push(step);
-      const div = document.createElement("div");
-      div.className = "step" + (evt.depth ? " sub-step" : "");
+
+      // 思考过程:放入独立的 thinkBox
+      if (evt.thinking) {
+        const thinkDiv = document.createElement("div");
+        thinkDiv.className = "think-card";
+        const agTag = agIcon ? `<span class="tc-agent">${agIcon} ${esc(agLbl)}</span>` : "";
+        thinkDiv.innerHTML = `<div class="tc-head">
+          ${agTag}
+          <span class="tc-label">🧠 思考</span>
+        </div>
+        <div class="tc-body">${esc(evt.thinking)}</div>`;
+        thinkBox.appendChild(thinkDiv);
+      }
+
+      // 工具调用卡片:紧凑展示
+      const toolDiv = document.createElement("div");
+      toolDiv.className = "step-card";
       const depthIndent = evt.depth ? `style="margin-left:${evt.depth * 12}px"` : "";
-      div.innerHTML = `<div class="step-head running" ${depthIndent}><span class="dot"></span>
-        ${agIcon ? `<span class="step-agent">${agIcon} ${esc(agLbl)}</span>` : ""}
-        调用工具 <span class="tool">${esc(evt.tool)}</span></div>
-        ${evt.thinking ? `<div class="step-thinking" ${depthIndent}>${esc(evt.thinking)}</div>` : ""}
-        <div class="step-args" ${depthIndent}>${esc(JSON.stringify(evt.args, null, 2))}</div>
-        <div class="step-result" ${depthIndent}>执行中…</div>`;
-      bubble.appendChild(div);
-      step.resultEl = div.querySelector(".step-result");
-      step.headEl = div.querySelector(".step-head");
+      const toolName = (evt.tool || "").replace(/_/g, " ");
+      toolDiv.innerHTML = `<div class="sc-head" ${depthIndent}>
+        <span class="sc-dot"></span>
+        ${agIcon ? `<span class="sc-agent">${agIcon} ${esc(agLbl)}</span>` : ""}
+        <span class="sc-icon">🔧</span>
+        <span class="sc-tool">${esc(toolName)}</span>
+        <span class="sc-status">执行中…</span>
+      </div>
+      <div class="sc-body">
+        <div class="sc-args"><span class="sc-label">参数</span>${esc(JSON.stringify(evt.args, null, 2))}</div>
+        <div class="sc-result">⏳ 等待结果…</div>
+      </div>`;
+      bubble.appendChild(toolDiv);
+      step.resultEl = toolDiv.querySelector(".sc-result");
+      step.headEl = toolDiv.querySelector(".sc-head");
+      step.statusEl = toolDiv.querySelector(".sc-status");
+      step.cardEl = toolDiv;
       scrollChat();
       break;
     }
     case "observation": {
       const step = assistant.steps[assistant.steps.length - 1];
       if (step) {
-        step.resultEl.textContent = prettyResult(evt.result);
-        step.headEl.classList.remove("running");
+        step.resultEl.innerHTML = `<span class="sc-label">结果</span>${prettyResult(evt.result)}`;
         step.headEl.classList.add("done");
+        if (step.statusEl) step.statusEl.textContent = "✓ 完成";
+        // 完成后自动折叠
+        step.cardEl.classList.add("collapsed");
       }
       scrollChat();
       break;
     }
     case "answer_start": {
+      const loading = thinkBox.querySelector(".think-loading");
+      if (loading) loading.remove();
       assistant.answerEl = document.createElement("div");
-      assistant.answerEl.className = "md";
+      assistant.answerEl.className = "md answer-body";
       bubble.appendChild(assistant.answerEl);
       assistant.rawBuf = "";
       const caret = document.createElement("span");
@@ -704,12 +732,11 @@ function handleEvent(evt, assistant) {
     case "token": {
       if (!assistant.answerEl) {
         assistant.answerEl = document.createElement("div");
-        assistant.answerEl.className = "md";
+        assistant.answerEl.className = "md answer-body";
         assistant.rawBuf = "";
         bubble.appendChild(assistant.answerEl);
       }
       assistant.rawBuf += evt.text;
-      // 流式渲染 markdown (节流:每 token 都渲染,内容小可接受)
       assistant.answerEl.innerHTML = renderMd(assistant.rawBuf);
       scrollChat();
       break;
@@ -720,7 +747,6 @@ function handleEvent(evt, assistant) {
       break;
     }
     case "heartbeat":
-      // 心跳: 仅保活, 不渲染。可选用来更新"已运行时长"
       if (window.__naRunStartTs) {
         const elapsed = Math.max(0, Math.round((Date.now() - window.__naRunStartTs) / 1000));
         const hd = document.getElementById("run-elapsed");
@@ -730,39 +756,51 @@ function handleEvent(evt, assistant) {
         }
       }
       break;
-    case "error":
-      bubble.innerHTML += `<div class="err">错误: ${esc(evt.message)}</div>`;
-      // 风险防护超限: 用 toast 突出提示 (不止在气泡里)
-      if (evt.reason === "loop_detected" ||
-          (evt.message && (evt.message.includes("超限") || evt.message.includes("卡循环")))) {
-        toast(`⚠️ ${evt.message}`, "warn", 6000);
+    case "error": {
+      const errMsg = evt.message || "";
+      const isApiKeyErr = errMsg.includes("API Key") || errMsg.includes("api_key") || errMsg.includes("Missing credentials");
+      const isLoop = evt.reason === "loop_detected" || errMsg.includes("超限") || errMsg.includes("卡循环");
+      if (isApiKeyErr) {
+        bubble.innerHTML += `<div class="err err-apikey">
+          <div class="err-icon">🔑</div>
+          <div class="err-text">${esc(errMsg)}</div>
+          <button class="btn primary sm" onclick="$('#settings-btn').click()" style="margin-top:8px">去设置面板配置 API Key</button>
+        </div>`;
+        toast("未配置 API Key，请在设置面板中配置", "warn", 8000);
+      } else if (isLoop) {
+        bubble.innerHTML += `<div class="err err-warn">
+          <div class="err-icon">⚠️</div>
+          <div class="err-text">${esc(errMsg)}</div>
+        </div>`;
+        toast(`⚠️ ${errMsg}`, "warn", 6000);
+      } else {
+        bubble.innerHTML += `<div class="err">
+          <div class="err-icon">❌</div>
+          <div class="err-text">${esc(errMsg)}</div>
+        </div>`;
       }
       window.__naRunStartTs = null;
       const hdErr = document.getElementById("run-elapsed");
       if (hdErr) { hdErr.textContent = ""; hdErr.hidden = true; }
       break;
+    }
     case "done":
       if (!assistant.answerEl) {
         const note = document.createElement("div");
-        note.style.color = "var(--green)";
-        note.style.fontSize = "13px";
+        note.className = "done-note";
         note.textContent = `✓ 完成 (${evt.steps} 步)` + (evt.note ? ` · ${evt.note}` : "");
         bubble.appendChild(note);
       } else {
         const note = document.createElement("div");
-        note.style.color = "var(--muted)";
-        note.style.fontSize = "12px";
-        note.style.marginTop = "8px";
+        note.className = "done-note muted";
         note.textContent = `✓ 完成 · ${evt.steps} 步` +
           (evt.stats ? ` · ${evt.stats.chapters}章/${evt.stats.total_chars}字` : "");
         bubble.appendChild(note);
       }
-      // 任务完成,活跃 agent 回到 orchestrator(总编)
       updateActiveAgent("orchestrator");
       window.__naRunStartTs = null;
       const hd = document.getElementById("run-elapsed");
       if (hd) { hd.textContent = ""; hd.hidden = true; }
-      // 刷新章节列表: 状态徽章 / 字数 / 新增章节需要从后端拉最新
       if (currentProject) {
         api(`/api/projects/${currentProject.id}`).then((p) => {
           if (p && currentProject) {
@@ -1006,6 +1044,11 @@ async function doExport(fmt) {
 
 document.addEventListener("click", (e) => {
   if (e.target.classList.contains("sugg")) send(e.target.dataset.prompt || e.target.textContent);
+  // 点击 step-card 头部切换折叠
+  const scHead = e.target.closest(".sc-head");
+  if (scHead) {
+    scHead.closest(".step-card")?.classList.toggle("collapsed");
+  }
 });
 
 // init

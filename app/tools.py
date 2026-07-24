@@ -15,8 +15,12 @@ import json
 import re
 from typing import Any, Optional
 
+import httpx
+from bs4 import BeautifulSoup
+
 from . import store
 from .config import get_settings
+from .deai import run_full_deai_check
 from .llm import chat, stream
 
 
@@ -222,13 +226,31 @@ async def continue_writing(
     existing_tail = (target.get("content") or "")[-1800:]
 
     system = (
-        "你是一位技艺精湛的小说家。严格延续已有的人物性格、世界观、文风与情节走向,"
+        "你是一位技艺精湛的小说家。\n\n"
+        "【最高优先级:细纲边界 - 不可违反】\n"
+        "细纲是本章剧情的唯一权威蓝图:\n"
+        "1. 必须严格消费细纲:正文逐项展开细纲已有的核心事件、内容概括、情节安排、人物关系、情节细化、结尾设定和章尾钩子。\n"
+        "2. 不得自造剧情:不得为凑字/增强戏剧性新增细纲没有的主线事件、新角色、新反转、新金手指规则、新伏笔结算。\n"
+        "3. 只允许微连接:可补角色移动、视线、动作 beat、环境细节、对话承接等微连接,但必须服务于细纲已列情节点。\n"
+        "4. 字数不足时:只扩写细纲已列情节点,不新增剧情;仍不足返回 outline_underfilled 欠账报告。\n\n"
+        "【三维度揉进写法】\n"
+        "每个子事件将发生/感知/反应三维度揉进同一段连续正文:\n"
+        "- 发生:这件事出现了 (1-2 句叙事,含具体细节)\n"
+        "- 感知:主角注意到的感官细节 (至少 1 个不同感官,聚焦物件或身体部位)\n"
+        "- 反应:身体如何回应 (具体身体动作,可含一句极短心理定格)\n"
+        "- 三维度织在同一段,不按维度分段写。禁止\"先写发生再补感知再补反应\"的堆叠写法。\n\n"
+        "【叙述姿态:深度限知】\n"
+        "全程锁死主视角角色的此刻感知,只写她此刻看到/听到/闻到/身体感到/脑中闪过的;"
+        "镜头不拉远、不俯瞰、不切他人内心;读者与她同步获知,不提前剧透、不补全背景。\n\n"
+        "严格延续已有的人物性格、世界观、文风与情节走向,"
         "自然衔接上文结尾,不要重复已有内容,不要输出除正文外的任何说明。"
     )
     user = (
         f"# 项目设定\n{brief}\n\n# 设定资料\n{elements}\n\n"
         f"# 检索到的相关上文\n{context}\n\n"
-        f"# 本章信息\n标题:{target['title']}\n本章梗概:{target.get('outline','')}\n"
+        f"# 本章细纲 (唯一权威蓝图,必须逐项消费,不得自造剧情)\n"
+        f"标题:{target['title']}\n"
+        f"细纲:\n{target.get('outline','(暂无细纲)')}\n\n"
         f"# 本章已有正文(结尾部分)\n{existing_tail or '(本章尚未开始)'}\n"
         f"# 续写要求\n{instruction or '自然推进情节,保持张力。'}\n"
         f"续写约 {length} 字正文,直接输出小说内容。"
@@ -259,12 +281,144 @@ async def continue_writing(
     # 追加到该章节内容
     merged = (target.get("content") or "") + ("\n" if target.get("content") else "") + new_text
     store.update_chapter(target["id"], content=merged, status="written")
+
+    # 写后去AI味检测 (P0-4: 集成 deai.py)
+    deai_result = run_full_deai_check(new_text)
+
+    # 写后追踪更新 (P0-3: 追踪文件读写闭环)
+    tracking_result = await _update_tracking_after_write(
+        pid, target, new_text, brief, elements
+    )
+
     return {
         "chapter_id": target["id"],
         "title": target["title"],
         "appended": len(new_text),
         "total_chars": len(merged),
+        "deai": {
+            "blocking_count": deai_result["blocking_count"],
+            "advisory_count": deai_result["advisory_count"],
+            "ai_patterns": [f["type"] for f in deai_result["ai_patterns"]],
+            "degeneration": [f["type"] for f in deai_result["degeneration"]],
+            "tip": (
+                "发现 blocking 级问题需修复后再继续。"
+                "用 polish 工具重写对应段落,修复后重新续写。"
+                if deai_result["blocking_count"] > 0
+                else "无 blocking 级问题,可继续。"
+            ),
+        },
+        "tracking": tracking_result,
     }
+
+
+async def _update_tracking_after_write(
+    pid: str, target: dict, new_text: str, brief: str, elements: str,
+) -> dict:
+    """写后追踪更新 (P0-3): 从新生成的正文中提取伏笔/时间线/角色状态变化并写入数据库。
+
+    使用 LLM 分析新正文, 提取:
+    - 新埋设的伏笔 (new_foreshadows)
+    - 已回收的伏笔 (recovered_foreshadows)
+    - 时间线事件 (timeline_events)
+    - 角色状态变化 (character_state_changes)
+
+    然后更新对应的数据库表。
+    """
+    chapter_idx = target["idx"]
+    chapter_title = target["title"]
+    outline = target.get("outline") or ""
+
+    # 只用新正文前 3000 字做提取 (避免 token 过多)
+    sample = new_text[:3000]
+
+    system = (
+        "你是小说结构分析助手。从给定正文中提取追踪信息,严格只输出 JSON。"
+    )
+    schema = {
+        "new_foreshadows": [
+            {"name": "伏笔名", "content": "简述", "expected_recovery": "预期回收章节(数字,可null)"}
+        ],
+        "recovered_foreshadows": [
+            {"name": "已回收伏笔名", "how": "回收方式简述"}
+        ],
+        "timeline_events": [
+            {"event": "事件描述", "time_in_story": "故事内时间", "cause": "原因", "effect": "后果"}
+        ],
+        "character_state_changes": [
+            {"character_name": "角色名", "current_state": "当前状态描述", "change": "本章变化"}
+        ],
+    }
+    user = (
+        f"# 本章细纲\n{outline}\n\n"
+        f"# 本章新正文(前3000字)\n{sample}\n\n"
+        f"# 已有角色设定\n{elements[:2000]}\n\n"
+        f"请从新正文中提取追踪信息,只输出 JSON:\n{json.dumps(schema, ensure_ascii=False)}"
+    )
+    try:
+        resp = await chat(
+            [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            get_settings().default_model,
+            temperature=0.3,
+            max_tokens=2000,
+            response_format={"type": "json_object"},
+        )
+        content = resp["content"].strip()
+        m = re.search(r"\{.*\}", content, re.S)
+        if m:
+            content = m.group(0)
+        data = json.loads(content)
+    except Exception:
+        data = {}
+
+    results = {"foreshadows_added": 0, "foreshadows_recovered": 0,
+               "timeline_added": 0, "character_states_updated": 0}
+
+    # 新伏笔入库
+    for f in data.get("new_foreshadows", []):
+        if f.get("name"):
+            store.add_foreshadowing(
+                pid, f["name"], f.get("content", ""),
+                planted_chapter=chapter_idx,
+                expected_recovery=f.get("expected_recovery"),
+            )
+            results["foreshadows_added"] += 1
+
+    # 伏笔回收标记
+    for f in data.get("recovered_foreshadows", []):
+        if f.get("name"):
+            existing = store.list_foreshadowings(pid, status="planted")
+            for e in existing:
+                if e["name"] == f["name"]:
+                    store.update_foreshadowing(
+                        e["id"], status="recovered",
+                        actual_recovery=chapter_idx,
+                    )
+                    results["foreshadows_recovered"] += 1
+                    break
+
+    # 时间线事件入库
+    for ev in data.get("timeline_events", []):
+        if ev.get("event"):
+            store.add_timeline_event(
+                pid, ev["event"],
+                chapter_idx=chapter_idx,
+                time_in_story=ev.get("time_in_story"),
+                cause=ev.get("cause"),
+                effect=ev.get("effect"),
+            )
+            results["timeline_added"] += 1
+
+    # 角色状态更新
+    for cs in data.get("character_state_changes", []):
+        if cs.get("character_name") and cs.get("current_state"):
+            store.upsert_character_state(
+                pid, cs["character_name"], cs["current_state"],
+                latest_chapter=chapter_idx,
+                change=cs.get("change"),
+            )
+            results["character_states_updated"] += 1
+
+    return results
 
 
 async def polish(
@@ -965,6 +1119,75 @@ TOOL_SCHEMA: list[dict] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "web_fetch",
+            "description": "【真实网页抓取】访问指定 URL 的网页,抽取正文内容返回。"
+            "用于扫榜调研时直接打开起点/番茄/七猫等榜单页面,获取真实数据。"
+            "也用于搜索结果的详情页抓取。注意:不是用 LLM 训练数据,是真 HTTP 请求。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "要抓取的网页 URL (完整 https:// 地址)"},
+                    "max_chars": {"type": "integer", "description": "返回最大字符数,默认 8000"},
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": "【真实搜索引擎】用 Bing 搜索指定关键词,返回前 8 条结果(标题/摘要/URL)。"
+            "用于扫榜调研时搜索最新榜单/热门话题/竞品信息。不是 LLM 训练数据,是真搜索。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "搜索关键词"},
+                    "max_results": {"type": "integer", "description": "返回结果数,默认 8"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_fetch",
+            "description": "【真实浏览器抓取】用 Playwright Chromium 浏览器打开网页,支持 JS 渲染页面。"
+            "用于抓取起点/番茄/七猫等 SPA 榜单页 (这些页面依赖 JS 动态加载内容,"
+            "web_fetch 的 httpx 无法正确渲染)。也用于需要登录态或复杂交互的页面。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "要抓取的网页 URL (完整 https:// 地址)"},
+                    "max_chars": {"type": "integer", "description": "返回最大字符数,默认 8000"},
+                    "wait_for": {"type": "string",
+                                 "enum": ["networkidle", "load", "domcontentloaded"],
+                                 "description": "等待策略:networkidle=网络空闲(默认,适合JS渲染页)/load=页面加载完成/domcontentloaded=DOM就绪"},
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_screenshot",
+            "description": "【浏览器截图】用 Playwright 对网页截图,返回 base64 PNG。"
+            "用于扫榜调研时截取榜单页面截图,或验证页面渲染状态。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "要截图的网页 URL"},
+                    "full_page": {"type": "boolean", "description": "是否截取全页,默认 true"},
+                },
+                "required": ["url"],
+            },
+        },
+    },
 ]
 
 
@@ -1098,6 +1321,27 @@ async def dispatch(pid: str, name: str, args: dict) -> str:
             res = skill_adapter.full_audit(
                 args.get("text", ""),
                 outline=args.get("outline"),
+            )
+        elif name == "web_fetch":
+            res = await _web_fetch(
+                url=args["url"],
+                max_chars=int(args.get("max_chars", 8000)),
+            )
+        elif name == "web_search":
+            res = await _web_search(
+                query=args["query"],
+                max_results=int(args.get("max_results", 8)),
+            )
+        elif name == "browser_fetch":
+            res = await _browser_fetch(
+                url=args["url"],
+                max_chars=int(args.get("max_chars", 8000)),
+                wait_for=args.get("wait_for", "networkidle"),
+            )
+        elif name == "browser_screenshot":
+            res = await _browser_screenshot(
+                url=args["url"],
+                full_page=bool(args.get("full_page", True)),
             )
         else:
             res = {"error": f"未知工具 {name}"}
@@ -1469,4 +1713,238 @@ def _skill_get_author_reference(args: dict) -> dict:
             "让模型从原文片段学句式节奏与信息密度。methodology 给出节奏公式与常用词供参考。"
         ),
     }
+
+
+# ---------------- 真实网络工具 (web_fetch / web_search) ----------------
+# 这些工具发起真实 HTTP 请求,不是用 LLM 训练数据。
+# 用于扫榜调研时访问起点/番茄/七猫等真实榜单页面,以及搜索最新热门话题。
+
+_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
+
+_HTTP_TIMEOUT = 15.0  # 请求超时(秒), 避免长时间挂起
+
+
+async def _web_fetch(url: str, max_chars: int = 8000) -> dict:
+    """抓取指定 URL 的网页,抽取正文内容。
+
+    使用 httpx 发送 HTTP 请求, BeautifulSoup 解析 HTML,
+    优先用 readability-lxml 提取正文, 失败则回退到纯文本抽取。
+    """
+    if not url.startswith(("http://", "https://")):
+        return {"error": "url 必须以 http:// 或 https:// 开头", "url": url}
+    try:
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT, follow_redirects=True) as cl:
+            resp = await cl.get(
+                url,
+                headers={"User-Agent": _USER_AGENT, "Accept": "text/html,application/xhtml+xml"},
+            )
+        if resp.status_code >= 400:
+            return {"error": f"HTTP {resp.status_code}", "url": url}
+        html = resp.text
+    except httpx.TimeoutException:
+        return {"error": "请求超时 (15s)", "url": url}
+    except Exception as e:
+        return {"error": f"请求失败: {e}", "url": url}
+
+    soup = BeautifulSoup(html, "lxml")
+
+    # 优先用 readability 提取正文
+    try:
+        from readability import Document
+        doc = Document(html)
+        title = doc.title() or soup.title.string or ""
+        text = doc.summary()
+        text_soup = BeautifulSoup(text, "lxml")
+        main_text = text_soup.get_text(separator="\n", strip=True)
+    except Exception:
+        # 回退: 去掉 script/style/nav/footer/header, 提取 body 文本
+        for tag in soup.find_all(["script", "style", "nav", "footer", "header", "aside"]):
+            tag.decompose()
+        title = soup.title.string if soup.title else ""
+        main_text = soup.get_text(separator="\n", strip=True)
+
+    # 去空行 + 截断
+    lines = [ln.strip() for ln in main_text.split("\n") if ln.strip()]
+    main_text = "\n".join(lines)
+    if len(main_text) > max_chars:
+        main_text = main_text[:max_chars] + f"\n\n… (已截断, 原文共 {len(main_text)} 字符)"
+
+    return {
+        "url": url,
+        "title": title,
+        "content": main_text,
+        "content_chars": len(main_text),
+        "fetched_at": __import__("time").time(),
+    }
+
+
+async def _web_search(query: str, max_results: int = 8) -> dict:
+    """用 Bing 搜索, 返回结构化结果。
+
+    不依赖 API Key, 直接用 Bing HTML 搜索接口抓取结果页。
+    """
+    try:
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT, follow_redirects=True) as cl:
+            resp = await cl.get(
+                "https://www.bing.com/search",
+                params={"q": query, "mkt": "zh-CN", "setlang": "zh-Hans"},
+                headers={"User-Agent": _USER_AGENT, "Accept-Language": "zh-CN,zh;q=0.9"},
+            )
+        if resp.status_code >= 400:
+            return {"error": f"搜索请求失败 HTTP {resp.status_code}", "query": query}
+        html = resp.text
+    except Exception as e:
+        return {"error": f"搜索失败: {e}", "query": query}
+
+    soup = BeautifulSoup(html, "lxml")
+    results = []
+    # Bing 搜索结果结构: li.b_algo > h2 > a
+    for item in soup.select("li.b_algo"):
+        title_el = item.select_one("h2 a")
+        if not title_el:
+            continue
+        href = title_el.get("href", "")
+        title = title_el.get_text(strip=True)
+        # 摘要: p 或 div.b_caption
+        snippet_el = item.select_one(".b_caption p, .b_lineclamp2, p")
+        snippet = snippet_el.get_text(strip=True) if snippet_el else ""
+        if title and href:
+            results.append({
+                "title": title,
+                "url": href,
+                "snippet": snippet,
+            })
+        if len(results) >= max_results:
+            break
+
+    if not results:
+        return {
+            "query": query,
+            "results": [],
+            "note": "未找到结果。Bing 可能返回了验证页面, 稍后重试。",
+        }
+
+    return {
+        "query": query,
+        "count": len(results),
+        "results": results,
+        "searched_at": __import__("time").time(),
+    }
+
+
+# ---------------- Playwright 浏览器工具 (browser_fetch / browser_screenshot) ----------------
+# 使用 Playwright 真实浏览器访问网页,支持 JS 渲染页面 (如起点/番茄/七猫等 SPA 榜单页)。
+# 沙箱逻辑: 这两个工具都是只读的 (不修改项目数据), 所有 agent 均可调用,
+# 包括只读 agent (story-explorer, consistency-checker)。
+
+_BROWSER_TIMEOUT = 20.0  # 浏览器操作超时(秒)
+
+# 全局单例 browser 实例 (避免每次请求都启动浏览器)
+_browser: Any = None
+_playwright: Any = None
+
+
+async def _get_browser():
+    """获取或创建 Playwright browser 实例 (懒加载单例)。"""
+    global _browser, _playwright
+    if _browser is None:
+        try:
+            from playwright.async_api import async_playwright
+            _playwright = await async_playwright().start()
+            _browser = await _playwright.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                ],
+            )
+        except Exception as e:
+            # 如果 Playwright 未安装或浏览器未安装,返回友好错误
+            return None, f"浏览器启动失败: {e}。请确保已安装 Playwright 和 Chromium: pip install playwright && playwright install chromium"
+    return _browser, None
+
+
+async def _browser_fetch(url: str, max_chars: int = 8000, *, wait_for: str = "networkidle") -> dict:
+    """使用 Playwright 真实浏览器抓取网页 (支持 JS 渲染)。
+
+    相比 web_fetch (httpx), 这个工具能正确渲染需 JavaScript 的页面,
+    如起点/番茄/七猫等 SPA 榜单页、动态加载内容的页面。
+    """
+    if not url.startswith(("http://", "https://")):
+        return {"error": "url 必须以 http:// 或 https:// 开头", "url": url}
+
+    browser, err = await _get_browser()
+    if err:
+        return {"error": err, "url": url}
+
+    try:
+        page = await browser.new_page()
+        try:
+            await page.goto(url, wait_until=wait_for, timeout=_BROWSER_TIMEOUT * 1000)
+            title = await page.title()
+            # 提取页面正文文本
+            text = await page.evaluate("""() => {
+                // 去掉 script/style/nav/footer/header
+                const els = document.querySelectorAll('script, style, nav, footer, header, aside, [role="navigation"]');
+                els.forEach(el => el.remove());
+                return document.body ? document.body.innerText : document.documentElement.innerText;
+            }""")
+            # 清理空行
+            lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
+            clean = "\n".join(lines)
+            if len(clean) > max_chars:
+                clean = clean[:max_chars] + f"\n\n… (已截断, 原文共 {len(clean)} 字符)"
+            return {
+                "url": url,
+                "title": title,
+                "content": clean,
+                "content_chars": len(clean),
+                "fetched_at": __import__("time").time(),
+                "method": "playwright",
+            }
+        finally:
+            await page.close()
+    except Exception as e:
+        return {"error": f"浏览器抓取失败: {e}", "url": url}
+
+
+async def _browser_screenshot(url: str, *, full_page: bool = True) -> dict:
+    """使用 Playwright 对网页截图 (返回 base64 PNG)。
+
+    用于扫榜调研时截取榜单页面/竞品分析截图,或验证页面渲染状态。
+    截图结果可直接在前端展示。
+    """
+    import base64
+
+    if not url.startswith(("http://", "https://")):
+        return {"error": "url 必须以 http:// 或 https:// 开头", "url": url}
+
+    browser, err = await _get_browser()
+    if err:
+        return {"error": err, "url": url}
+
+    try:
+        page = await browser.new_page(viewport={"width": 1280, "height": 900})
+        try:
+            await page.goto(url, wait_until="networkidle", timeout=_BROWSER_TIMEOUT * 1000)
+            title = await page.title()
+            screenshot_bytes = await page.screenshot(full_page=full_page, type="png")
+            b64 = base64.b64encode(screenshot_bytes).decode("ascii")
+            return {
+                "url": url,
+                "title": title,
+                "screenshot_base64": b64,
+                "format": "png",
+                "size_bytes": len(screenshot_bytes),
+                "taken_at": __import__("time").time(),
+            }
+        finally:
+            await page.close()
+    except Exception as e:
+        return {"error": f"截图失败: {e}", "url": url}
 
