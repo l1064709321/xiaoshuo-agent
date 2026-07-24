@@ -75,8 +75,8 @@
 
 ```bash
 # 1. 克隆
-git clone https://github.com/l1064709321/novel-agent.git
-cd novel-agent
+git clone https://github.com/l1064709321/xiaoshuo-agent.git
+cd xiaoshuo-agent
 
 # 2. 装依赖
 pip install -r requirements.txt
@@ -107,8 +107,8 @@ export SILICONFLOW_API_KEY="sk-xxx"   # 硅基流动
 或编辑配置文件:
 
 ```bash
-cp config.example.yaml ~/.novel-agent/config.yaml
-vim ~/.novel-agent/config.yaml
+cp config.example.yaml ~/.xiaoshuo-agent/config.yaml
+vim ~/.xiaosuo-agent/config.yaml
 ```
 
 ### 使用流程
@@ -124,7 +124,7 @@ vim ~/.novel-agent/config.yaml
 ## 📁 项目结构
 
 ```
-novel-agent/
+xiaoshuo-agent/
 ├── app/
 │   ├── agents.py       # 7-agent 定义 + 8 阶段工作流 + 毒舌审稿人设
 │   ├── tools.py        # 11 个工具(扫榜/拆书/大纲/续写/润色/...)
